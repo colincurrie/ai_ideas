@@ -1,0 +1,38 @@
+{
+  "_fixture_note": "Mock GET /database/search?type=release results: two pressings of the same recording (same master_id) plus one unrelated decoy that should fall below the match threshold.",
+  "results": [
+    {
+      "id": 1001,
+      "master_id": 555,
+      "title": "Gemini - At That Café",
+      "uri": "/Gemini-At-That-Cafe/release/1001",
+      "resource_url": "https://api.discogs.com/releases/1001",
+      "year": "1997",
+      "country": "UK",
+      "format": ["Vinyl", "12\""],
+      "community": {"have": 120, "want": 40}
+    },
+    {
+      "id": 1002,
+      "master_id": 555,
+      "title": "Gemini - At That Cafe",
+      "uri": "/Gemini-At-That-Cafe/release/1002",
+      "resource_url": "https://api.discogs.com/releases/1002",
+      "year": "2005",
+      "country": "US",
+      "format": ["CD", "Reissue"],
+      "community": {"have": 15, "want": 3}
+    },
+    {
+      "id": 2002,
+      "master_id": 900,
+      "title": "DJ Nobody - Completely Unrelated Track",
+      "uri": "/DJ-Nobody-Completely-Unrelated-Track/release/2002",
+      "resource_url": "https://api.discogs.com/releases/2002",
+      "year": "2010",
+      "country": "DE",
+      "format": ["Vinyl"],
+      "community": {"have": 5, "want": 1}
+    }
+  ]
+}

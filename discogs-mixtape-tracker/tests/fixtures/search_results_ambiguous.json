@@ -1,0 +1,27 @@
+{
+  "_fixture_note": "Mock search results where two genuinely different recordings (different master_id) both plausibly match artist+title text — this is the ambiguous case the confidence score should penalize.",
+  "results": [
+    {
+      "id": 3001,
+      "master_id": 700,
+      "title": "Ray Kajioka - Elevation",
+      "uri": "/Ray-Kajioka-Elevation/release/3001",
+      "resource_url": "https://api.discogs.com/releases/3001",
+      "year": "1996",
+      "country": "UK",
+      "format": ["Vinyl", "12\""],
+      "community": {"have": 80, "want": 20}
+    },
+    {
+      "id": 3002,
+      "master_id": 701,
+      "title": "Ray Kajioka - Elevation (Remix)",
+      "uri": "/Ray-Kajioka-Elevation-Remix/release/3002",
+      "resource_url": "https://api.discogs.com/releases/3002",
+      "year": "1998",
+      "country": "US",
+      "format": ["Vinyl", "12\""],
+      "community": {"have": 60, "want": 10}
+    }
+  ]
+}

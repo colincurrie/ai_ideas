@@ -1,0 +1,37 @@
+{
+  "_fixture_note": "Hand-built mock in the shape of GET /masters/{id}, used to unit-test parsing offline (discogs.com is not reachable from the build sandbox). Not a live API capture.",
+  "id": 268442,
+  "title": "fabric 01",
+  "tracklist": [
+    {
+      "position": "1",
+      "type_": "index",
+      "title": "Gemini – At That Café",
+      "duration": ""
+    },
+    {
+      "position": "2",
+      "type_": "index",
+      "title": "Ray Kajioka – Elevation",
+      "duration": ""
+    },
+    {
+      "position": "",
+      "type_": "heading",
+      "title": "Mixed By",
+      "duration": ""
+    },
+    {
+      "position": "3",
+      "type_": "index",
+      "title": "Someone With A Hyphen-Name - Track - With Dash In Title",
+      "duration": ""
+    },
+    {
+      "position": "4",
+      "type_": "index",
+      "title": "No Separator Here",
+      "duration": ""
+    }
+  ]
+}
