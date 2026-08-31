@@ -40,6 +40,15 @@ module WebApp
       if password_hash.nil? || password_hash.empty?
         raise "WEB_APP_PASSWORD_HASH env var is required. Generate one with: bin/hash_password"
       end
+      begin
+        BCrypt::Password.new(password_hash)
+      rescue BCrypt::Errors::InvalidHash
+        raise "WEB_APP_PASSWORD_HASH doesn't look like a valid bcrypt hash (got #{password_hash.length} " \
+              "chars starting #{password_hash[0, 12].inspect}). A common cause: capturing " \
+              "bin/hash_password's prompt text along with the hash, e.g. via a shell that doesn't " \
+              "separate its stdout/stderr. Re-run bin/hash_password and paste back exactly one line " \
+              "starting with $2a$ or $2b$."
+      end
       set :password_hash, password_hash
 
       # Unlike serial-api, this service IS meant to be reached over the

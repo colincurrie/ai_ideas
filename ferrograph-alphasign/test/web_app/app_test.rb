@@ -7,6 +7,8 @@ ENV["WEB_APP_SECURE_COOKIES"] ||= "false" # rack-test doesn't speak HTTPS
 
 require "test_helper"
 require "rack/test"
+require "open3"
+require "rbconfig"
 require_relative "../../web_app/app"
 
 module WebApp
@@ -119,6 +121,27 @@ module WebApp
       login!
       delete "/api/messages/A?dry_run=true"
       assert_equal [[:delete, "/messages/A?dry_run=true"]], @fake_client.calls
+    end
+
+    def test_boot_fails_clearly_on_a_malformed_password_hash
+      # Regression test: bin/hash_password used to leak its "Password to
+      # hash: " prompt into stdout, so `WEB_APP_PASSWORD_HASH=$(bin/hash_password)`
+      # captured prompt-plus-hash instead of just the hash, and the app
+      # only discovered this the moment someone tried to log in, as a raw
+      # BCrypt::Errors::InvalidHash crash. It should now fail at boot,
+      # with a clear message, instead. Runs in a subprocess since the
+      # validation happens once at class-load time.
+      env = {
+        "SESSION_SECRET" => "a" * 64,
+        "WEB_APP_USERNAME" => "admin",
+        "WEB_APP_PASSWORD_HASH" => "Password to hash: \n$2a$12$notactuallyavalidhash"
+      }
+      out, status = Open3.capture2e(env, RbConfig.ruby, "-I", "lib",
+                                     "-e", "require_relative 'web_app/app'",
+                                     chdir: File.expand_path("../..", __dir__))
+
+      refute status.success?
+      assert_match(/doesn't look like a valid bcrypt hash/, out)
     end
   end
 end
