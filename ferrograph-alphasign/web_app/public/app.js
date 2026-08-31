@@ -51,7 +51,11 @@ function clearError() {
 }
 
 async function loadOptions() {
-  const { body } = await fetchJSON("/api/options");
+  const { ok, body } = await fetchJSON("/api/options");
+  if (!ok) {
+    flashError(`Could not load fonts/colors/positions/effects: ${body.error || "serial-api unreachable"}. Is serial_api running?`);
+    return;
+  }
   state.options = body;
   populateSelect(document.getElementById("font-select"), body.fonts, "seven_high");
   populateSelect(document.getElementById("color-select"), body.colors, "red");
@@ -69,9 +73,22 @@ async function loadOptions() {
 }
 
 async function refreshStatus() {
-  const { body } = await fetchJSON("/api/status");
+  const { ok, body } = await fetchJSON("/api/status");
   const dot = document.getElementById("status-dot");
   const text = document.getElementById("status-text");
+
+  // A failed call means serial_api itself is unreachable - a different,
+  // more urgent problem than "serial_api is fine but the sign's port
+  // hasn't been opened yet" (body.connected === false on a successful
+  // call). Keeping these visually distinct avoids the confusing case
+  // where "the whole service is down" reads identically to "totally
+  // normal, nothing sent yet."
+  if (!ok) {
+    dot.className = "dot bad";
+    text.textContent = body.error || "serial-api unreachable";
+    return;
+  }
+
   if (body.connected) {
     dot.className = "dot ok";
     const parityCode = (body.parity || "?")[0].toUpperCase();
