@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ferrograph Sign Control</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, sans-serif;
+    background: #14161a;
+    color: #e8e8e8;
+    margin: 0;
+    padding: 1.5rem;
+  }
+  .app { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.25rem; }
+  header { display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 1.15rem; margin: 0; }
+  header form { margin: 0; }
+  header button.link {
+    background: none; border: none; color: #9db4d1; cursor: pointer; font-size: 0.85rem; padding: 0;
+  }
+  .card {
+    background: #1e2128;
+    border: 1px solid #2b2f38;
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+  }
+  .status-bar { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: #aaa; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #555; display: inline-block; }
+  .dot.ok { background: #4caf6a; }
+  .dot.bad { background: #d9534f; }
+  .row { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center; margin-bottom: 0.75rem; }
+  label { font-size: 0.8rem; color: #aaa; display: block; margin-bottom: 0.2rem; }
+  select, input[type=text], input[type=number] {
+    background: #14161a; color: #e8e8e8; border: 1px solid #3a3f4b; border-radius: 6px;
+    padding: 0.4rem 0.5rem; font-size: 0.9rem;
+  }
+  .toolbar { display: flex; gap: 0.5rem; align-items: flex-end; margin-bottom: 0.6rem; flex-wrap: wrap; }
+  #editor {
+    min-height: 3.5rem;
+    border: 1px solid #3a3f4b;
+    border-radius: 6px;
+    padding: 0.6rem 0.75rem;
+    background: #101216;
+    font-size: 1rem;
+    line-height: 1.5;
+    outline: none;
+  }
+  #editor:empty::before { content: attr(data-placeholder); color: #666; }
+  .actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+  button {
+    padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid #3a3f4b;
+    background: #262a33; color: #e8e8e8; cursor: pointer; font-size: 0.9rem;
+  }
+  button.primary { background: #4f8cff; border-color: #4f8cff; color: white; }
+  button.primary:hover { background: #3f7aeb; }
+  button:hover { background: #303542; }
+  button.primary:hover { background: #3f7aeb; }
+  button.danger:hover { background: #4a2224; }
+  pre.bytes {
+    background: #101216; border: 1px solid #2b2f38; border-radius: 6px;
+    padding: 0.6rem 0.75rem; font-size: 0.78rem; overflow-x: auto; margin-top: 0.75rem; color: #9db4d1;
+  }
+  ul.labels { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+  ul.labels li {
+    display: flex; justify-content: space-between; align-items: center; gap: 0.75rem;
+    background: #14161a; border: 1px solid #2b2f38; border-radius: 6px; padding: 0.5rem 0.75rem;
+  }
+  ul.labels .content { font-size: 0.85rem; color: #ccc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  ul.labels .label-tag { font-weight: 600; color: #4f8cff; margin-right: 0.5rem; }
+  ul.labels .btns { display: flex; gap: 0.4rem; flex-shrink: 0; }
+  details summary { cursor: pointer; color: #aaa; font-size: 0.9rem; }
+  .muted { color: #777; font-size: 0.8rem; }
+  .error-msg { color: #ff8f94; font-size: 0.85rem; margin-top: 0.5rem; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Ferrograph Sign Control</h1>
+    <form method="post" action="/logout"><button type="submit" class="link">Sign out</button></form>
+  </header>
+
+  <div class="card status-bar" id="status-bar">
+    <span class="dot" id="status-dot"></span>
+    <span id="status-text">Checking connection&hellip;</span>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <label for="label">Label</label>
+        <select id="label"></select>
+      </div>
+      <div>
+        <label for="priority">&nbsp;</label>
+        <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.9rem;color:#e8e8e8;">
+          <input type="checkbox" id="priority" style="width:auto;"> Priority (overrides everything)
+        </label>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <div>
+        <label for="font-select">Font</label>
+        <select id="font-select"></select>
+      </div>
+      <div>
+        <label for="color-select">Color</label>
+        <select id="color-select"></select>
+      </div>
+      <button type="button" id="apply-format">Apply to selection</button>
+      <button type="button" id="clear-format">Clear formatting</button>
+    </div>
+
+    <label for="editor">Message</label>
+    <div id="editor" contenteditable="true" data-placeholder="Type your message, then select text and apply a color/font&hellip;"></div>
+
+    <div class="row" style="margin-top:0.75rem;">
+      <div>
+        <label for="position">Position</label>
+        <select id="position"></select>
+      </div>
+      <div>
+        <label for="mode">Effect</label>
+        <select id="mode"></select>
+      </div>
+      <div>
+        <label for="speed">Speed</label>
+        <select id="speed">
+          <option value="">Sign default</option>
+          <option value="1">1 (slowest)</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5">5 (fastest)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button type="button" id="preview-btn">Preview</button>
+      <button type="button" id="send-btn" class="primary">Send</button>
+      <button type="button" id="clear-btn" class="danger">Clear label</button>
+    </div>
+    <div class="error-msg" id="compose-error"></div>
+    <pre class="bytes" id="bytes-preview" hidden></pre>
+  </div>
+
+  <div class="card">
+    <label style="margin-bottom:0.5rem;">Active labels (this session)</label>
+    <ul class="labels" id="labels-list"></ul>
+    <p class="muted" id="labels-empty">Nothing sent yet.</p>
+  </div>
+
+  <details class="card">
+    <summary>Advanced: raw command</summary>
+    <div class="row" style="margin-top:0.75rem;">
+      <div>
+        <label for="raw-command">Command code</label>
+        <input type="text" id="raw-command" maxlength="1" size="2" placeholder="E">
+      </div>
+      <div style="flex:1;">
+        <label for="raw-data">Data</label>
+        <input type="text" id="raw-data" style="width:100%;" placeholder="23">
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" id="raw-preview-btn">Preview</button>
+      <button type="button" id="raw-send-btn" class="primary">Send</button>
+    </div>
+    <pre class="bytes" id="raw-bytes-preview" hidden></pre>
+  </details>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

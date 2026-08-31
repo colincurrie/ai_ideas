@@ -1,32 +1,55 @@
 # ferrograph-alphasign
 
-A command-line tool for sending messages to a **Ferrograph Aurora 63
-display running XDF firmware** over a serial link, using the
-Adaptive Microsystems/AMS **Alpha Sign Communications Protocol** (which XDF
-implements, per its own user guide, "fully compatible with the Adaptive
-Microsystems Alpha 1.0 protocol, with some Alpha 2.0 enhancements
-supported").
+Control a **Ferrograph Aurora 63 display running XDF firmware** over a
+serial link, using the Adaptive Microsystems/AMS **Alpha Sign
+Communications Protocol** (which XDF implements, per its own user guide,
+"fully compatible with the Adaptive Microsystems Alpha 1.0 protocol, with
+some Alpha 2.0 enhancements supported").
 
-This is step one of a larger goal: a full configuration app for the sign.
-The CLI here is deliberately small and the protocol logic lives in a plain
-Ruby library (`lib/alpha_sign`) so it can be reused by a GUI, a web app, or
-anything else later.
+Three pieces, all sharing one protocol library:
 
-The protocol constants in this library (colors, effects, positions) are
-transcribed directly from the XDF Extended Display Firmware User Guide
-(v4.26), *not* the generic Alpha protocol — XDF repurposes a few Alpha byte
-codes for different effects and adds a large number of its own extensions,
-documented below.
+```
+                          ┌────────────────────┐
+ bin/alphasign  ──────────►                    │
+ (CLI, direct to the sign)│   lib/alpha_sign    │  Alpha protocol: packets,
+                          │  (protocol library) │  colors, effects, fonts,
+ serial_api  ─────────────►                    │  positions, speeds
+ (HTTP wrapper around it) └────────────────────┘
+
+[Browser] --HTTPS, login+session--> [web_app] --localhost HTTP, no auth--> [serial_api] --RS232--> [Sign]
+                                    (public/tunnel-facing)     (both run on the Pi)   (127.0.0.1 only)
+```
+
+- **`lib/alpha_sign`** - the protocol itself: packet framing, colors,
+  effects/modes, fonts, positions, speeds. No I/O beyond the serial write.
+- **`bin/alphasign`** - a CLI for sending messages directly, useful for
+  testing and one-off use without running any servers.
+- **`serial_api/`** - a small Sinatra service that owns the serial port
+  and exposes it as JSON HTTP. No authentication of its own - meant to
+  stay bound to `127.0.0.1`.
+- **`web_app/`** - the authenticated front door: login, session, the
+  compose UI, and a proxy through to `serial_api`. This is the only piece
+  meant to be reachable over the network (e.g. via Tailscale).
+
+The protocol constants in the library (colors, effects, positions, fonts)
+are transcribed directly from the XDF Extended Display Firmware User Guide
+(v4.26), *not* the generic Alpha protocol - XDF repurposes a few Alpha byte
+codes for different effects and adds a large number of its own extensions.
+See `docs/xdf-firmware-notes.md` for a fuller summary of what's in that
+manual and how it maps onto this code.
 
 ## Hardware
 
 - **Sign**: Ferrograph Aurora 63 display (135 pixels wide, 2-colour
   red/green matrix), XDF firmware.
 - **Adapter**: DriverGenius SerialGuardX USB-C-to-RS232 (DB9) FTDI adapter.
+- **Server**: a Raspberry Pi, physically connected to the sign, running
+  both `serial_api` and `web_app` (see `DEPLOY.md`).
 
-Plug the adapter in and connect it to the sign's RS232 port (the display has
-an RJ45 connector with a non-standard pinout — see the `aurora_info.doc`
-hardware document for the correct wiring to a 9-way D-type connector).
+Plug the adapter in and connect it to the sign's RS232 port (the display
+has an RJ45 connector with a non-standard pinout - see the
+`aurora_info.doc` hardware document for the correct wiring to a 9-way
+D-type connector).
 
 ### Finding the serial device path
 
@@ -38,22 +61,27 @@ hardware document for the correct wiring to a 9-way D-type connector).
 
 ## Install
 
-Requires Ruby (tested on 3.x) and the `serialport` gem, which has a native
-extension:
+Requires Ruby (tested on 3.x). `bundle install` pulls in everything -
+`serialport` (has a native extension) for talking to the actual port, plus
+Sinatra/Puma for the two services:
 
 ```
 bundle install
 ```
 
 If `serialport` fails to build:
-- **Linux**: install build tools first, e.g. `sudo apt install build-essential ruby-dev`.
+- **Linux**: install build tools first, e.g. `sudo apt install build-essential ruby-dev libudev-dev`.
 - **macOS**: install Xcode Command Line Tools: `xcode-select --install`.
 - **Windows**: use RubyInstaller with the DevKit option, or run this from WSL.
 
-You don't need the gem installed to explore the CLI — `--dry-run` and the
-`list-*` commands work without it.
+You don't need the gem installed to explore the CLI or run either service
+in dry-run mode - `--dry-run`/`dry_run: true` and the `list-*`
+commands/`/options` endpoint work without it, and a real send fails with a
+clean error (not a crash) if the gem or device isn't there.
 
-## Usage
+## The CLI (`bin/alphasign`)
+
+For quick testing or direct one-off use, without running any servers:
 
 ```
 bin/alphasign send [options] MESSAGE
@@ -87,60 +115,56 @@ Run `bin/alphasign send --help` for the full list of options (label,
 position, mode, speed, color, priority, serial parameters, sign
 address/type).
 
-### Serial parameters
+## serial_api
 
-XDF **always** operates with 8 data bits, no parity, 1 stop bit — per the
-manual, "the 7,e,2 mode available on ADF and Alpha 4000 displays is not
-available with XDF". The CLI defaults match this (`--parity none
---data-bits 8 --stop-bits 1`); only change these if you're targeting
-different, non-XDF Alpha hardware.
+The device driver service. Configuration is via environment variables
+(`SERIAL_DEVICE`, `SERIAL_BAUD`, etc. - see `serial_api/config.rb` for the
+full list and defaults). Run it directly for local testing:
 
-Baud rate is set by the sign's own DIP switches 5 and 6, and depends on the
-control board fitted:
+```
+bundle exec rackup serial_api/config.ru -o 127.0.0.1 -p 4568
+```
 
-| Switch 6 | Switch 5 | Fast board (FDS-101 v4.01) | Slow board (FDS-CB2 / v4.0) |
-|----------|----------|-----------------------------|------------------------------|
-| Off      | Off      | 38400                       | 19200                        |
-| Off      | On       | 19200                       | 9600                         |
-| On       | Off      | 9600                        | 4800                         |
-| On       | On       | 4800                        | 2400                         |
+Endpoints (all JSON):
 
-Setting both DIP switches 7 and 8 on shows the XDF status/splash screen,
-which displays the currently configured address and baud rate. The CLI
-defaults to `--baud 9600`; pass `--baud` to match whatever the sign is
-actually set to.
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/status` | connection health: device, baud, address/type, last error |
+| GET | `/options` | valid modes/colors/positions/fonts, for populating a UI |
+| GET | `/messages` | labels sent since this process started (server-tracked, not read back from the sign - see "Known limitations") |
+| POST | `/messages` | `{label, position, mode, speed, priority, runs, dry_run}` - write/update a text file. `runs` is `[{text, color, font}, ...]`; `dry_run: true` returns the hex bytes without opening the port |
+| DELETE | `/messages/:label` | blank that label (`?dry_run=true` supported) |
+| POST | `/priority` | same shape as `/messages`, targets the Priority Text File (label `0`) |
+| DELETE | `/priority` | clear the priority override |
+| POST | `/raw` | `{command_code, data, type, address, dry_run}` - escape hatch for anything not wrapped above |
 
-### Sign address / type
+`position`/`mode`/`speed` apply to the whole message (that's a protocol
+constraint, not an API limitation - see `docs/xdf-firmware-notes.md`);
+`color`/`font` are per-run, letting you highlight parts of a message
+differently.
 
-By default, packets use type code `Z` (all sign types) and address `00`
-(broadcast) — the standard way to talk to a single sign on a point-to-point
-link without knowing its configured address (also XDF's recommended setup
-for a single display: "setting network address 00H ... is the most
-sensible"). Two more specific type codes are available via `--type` if you
-ever need them: `A` restricts to XDF/ADF signs only (useful if genuine Alpha
-signs share the network), and `a` is the Alpha 4120C-equivalent code
-specific to the Aurora 63. Override `--address` if you've set up multiple
-signs on a shared RS422 line, each with a unique non-zero address.
+## web_app
 
-### Colors, effects and positions
+The authenticated UI. Needs a few more environment variables:
 
-`list-colors`, `list-modes`, and `list-positions` enumerate everything this
-CLI knows how to name. A few things worth knowing, straight from the XDF
-manual:
+```
+export SESSION_SECRET=$(ruby -rsecurerandom -e 'puts SecureRandom.hex(64)')
+export WEB_APP_PASSWORD_HASH=$(bin/hash_password)   # prompts for a password, prints its bcrypt hash
+export WEB_APP_USERNAME=admin                        # default
+export SERIAL_API_URL=http://127.0.0.1:4568           # default
+export WEB_APP_SECURE_COOKIES=false                   # only for local http:// testing - leave true once behind HTTPS
+bundle exec rackup web_app/config.ru -o 127.0.0.1 -p 4567
+```
 
-- The Aurora 63 is a 2-colour (red/green) matrix, so several named colors
-  are visually identical on this hardware — `dim_red`/`dim_green` show as
-  plain red/green, and `brown`/`orange`/`yellow` all show as yellow. They're
-  still distinct protocol codes, kept for compatibility with software/data
-  written for genuine Alpha signs.
-- There's no RGB/hex color support — that's an RGB-pixel-sign feature (e.g.
-  Betabrite Prism) this hardware doesn't have.
-- The Alpha 3.0 `left`/`right` positions aren't supported by XDF ("not
-  supported ... and never will be"), so only `top`, `bottom`, `middle`, and
-  `fill` are offered.
-- Most modes in `list-modes` are XDF's *extended* effects (fades, colour
-  splits, cover/reveal, drop-down, etc.) — well beyond the basic Alpha
-  effect set, and not available on genuine Alpha hardware.
+Single shared login (one username/password for now - see "Known
+limitations" for what multi-user would take). Visit `http://127.0.0.1:4567`,
+sign in, and use the compose page: pick a label, type a message, select
+text and apply a color/font from the toolbar to highlight parts of it,
+choose position/effect/speed, then Preview (see the bytes without
+sending) or Send.
+
+For actually deploying this on a Raspberry Pi wired to the sign, with
+systemd units and Tailscale for remote access, see **`DEPLOY.md`**.
 
 ## Running tests
 
@@ -148,28 +172,45 @@ manual:
 bundle exec rake test
 ```
 
-The tests only exercise the pure protocol/packet-building logic (no serial
-hardware needed), so they also run fine without `bundle install` /
-`serialport`, e.g. per-file with:
+Covers `lib/alpha_sign`, `serial_api`, and `web_app` - all pure
+request-level tests (`Rack::Test` against the Sinatra apps directly, with
+`serial_api`'s tests using `dry_run` and `web_app`'s using a stub client
+in place of a real `serial_api`), so none of it needs real hardware or a
+running server. Also runs fine without `bundle install`/`serialport` for
+just the library tests, e.g.:
 
 ```
 ruby -Ilib -Itest test/alpha_sign/packet_test.rb
 ```
 
+## Known limitations / roadmap
+
+- **`GET /messages` reflects what this server has sent, not the sign's
+  actual state** - there's no read-back sync. XDF does support reading a
+  Text file's current content/status back (see
+  `docs/xdf-firmware-notes.md`, "Serial readback"); worth adding if
+  server restarts or multiple clients start making the difference matter.
+- **No checksum on outgoing packets.** Valid, simpler protocol form, but
+  means a corrupted send isn't caught by the sign - see
+  `docs/xdf-firmware-notes.md`, "Checksum processing" for what's at stake.
+- **Single shared login.** Fine for personal/family use; would need a real
+  user table (and probably per-user audit logging of who sent what) to
+  become multi-account.
+- Not yet wrapped in the API, though the protocol supports all of them
+  (see `docs/xdf-firmware-notes.md`): run-time/day scheduling (show a
+  message only during certain hours/days), the Timeout Message (a
+  fallback shown if the sign stops hearing from this app), beeper and
+  aux-port/IO control, and live time/date display codes. All reachable
+  today via the `raw` command/endpoint in the meantime.
+
 ## Protocol references
 
 - Ferrograph/XDF's own *Extended Display Firmware User Guide* (v4.26) —
   supplied by the display owner; the source for the hardware-specific
-  details above (serial format, DIP switch table, colors, effects,
-  device type codes).
+  details throughout this repo. See `docs/xdf-firmware-notes.md` for a
+  working summary.
 - [Alpha® Sign Communications Protocol (Alpha-American, PDF)](https://www.alpha-american.com/alpha-manuals/M-Protocol.pdf) —
   the base protocol XDF builds on (packet framing, command codes).
 - [msparks/alphasign](https://github.com/msparks/alphasign) — a Python
   implementation of the generic protocol, used as an initial cross-check
   before the XDF-specific manual was available.
-
-Only a subset of the protocol is wrapped so far: WRITE_TEXT (`send`/`clear`)
-and a `raw` escape hatch for anything else (special functions, string/dots
-files, read-back commands, run-time scheduling, beeper/IO control, etc. —
-see Appendices A and B of the XDF manual for the full command set) — useful
-groundwork for the configuration app planned next.
