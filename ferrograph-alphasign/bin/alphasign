@@ -1,0 +1,6 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require_relative "../lib/alpha_sign"
+
+AlphaSign::CLI.run(ARGV)
