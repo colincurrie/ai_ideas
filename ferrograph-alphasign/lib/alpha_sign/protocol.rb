@@ -32,7 +32,16 @@ module AlphaSign
     # Type code: which sign(s) a packet is addressed to. "Z" (all types) with
     # address "00" (broadcast) is the standard way to talk to a single sign
     # on a point-to-point RS232 link without needing to know its address.
+    #
+    # XDF also recognizes two more specific type codes worth knowing about
+    # (XDF user guide, section 3.3):
+    #   "A" (41H) - XDF/ADF-specific: only XDF or ADF signs respond, useful
+    #               if genuine Alpha signs share the same network.
+    #   "a" (61H) - the Alpha 4120C-equivalent code specifically for Aurora
+    #               63 units (Aurora 64 is "b", Aurora 62 is "t").
     TYPE_ALL = "Z"
+    TYPE_XDF_ADF_ONLY = "A"
+    TYPE_AURORA_63 = "a"
     BROADCAST_ADDRESS = "00"
   end
 end

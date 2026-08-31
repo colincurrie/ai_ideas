@@ -41,12 +41,17 @@ module AlphaSign
 
     def common_options(parser, opts)
       parser.on("-d", "--device DEVICE", "Serial device, e.g. /dev/ttyUSB0, /dev/tty.usbserial-XXXX, COM3") { |v| opts[:device] = v }
-      parser.on("-b", "--baud BAUD", Integer, "Baud rate (default: #{opts[:baud]})") { |v| opts[:baud] = v }
-      parser.on("--parity PARITY", %w[none even odd], "Parity: none|even|odd (default: #{opts[:parity]})") { |v| opts[:parity] = v }
-      parser.on("--data-bits N", Integer, "Data bits: 7 or 8 (default: #{opts[:data_bits]})") { |v| opts[:data_bits] = v }
-      parser.on("--stop-bits N", Integer, "Stop bits: 1 or 2 (default: #{opts[:stop_bits]})") { |v| opts[:stop_bits] = v }
+      parser.on("-b", "--baud BAUD", Integer,
+                "Baud rate (default: #{opts[:baud]}). XDF DIP switches offer 2400/4800/9600/19200/38400.") { |v| opts[:baud] = v }
+      parser.on("--parity PARITY", %w[none even odd],
+                "Parity: none|even|odd (default: #{opts[:parity]}). XDF always requires 'none' - only change this for non-XDF Alpha hardware.") { |v| opts[:parity] = v }
+      parser.on("--data-bits N", Integer,
+                "Data bits: 7 or 8 (default: #{opts[:data_bits]}). XDF always requires 8.") { |v| opts[:data_bits] = v }
+      parser.on("--stop-bits N", Integer,
+                "Stop bits: 1 or 2 (default: #{opts[:stop_bits]}). XDF always requires 1.") { |v| opts[:stop_bits] = v }
       parser.on("-a", "--address ADDR", "Sign address, 2 characters (default: #{opts[:address]} = broadcast)") { |v| opts[:address] = v }
-      parser.on("-t", "--type TYPE", "Sign type code, 1 character (default: #{opts[:type]} = all types)") { |v| opts[:type] = v }
+      parser.on("-t", "--type TYPE",
+                "Sign type code, 1 character (default: #{opts[:type]} = all types). 'A' = XDF/ADF signs only, 'a' = Aurora 63-specific.") { |v| opts[:type] = v }
       parser.on("--dry-run", "Build and print the packet without opening the serial port") { opts[:dry_run] = true }
       parser.on("-v", "--verbose", "Print the packet bytes that are sent") { opts[:verbose] = true }
     end
@@ -60,7 +65,7 @@ module AlphaSign
         p.on("-m", "--mode MODE", "Display mode (default: #{opts[:mode]}). See `alphasign list-modes`.") { |v| opts[:mode] = v }
         p.on("-p", "--position POSITION", "Display position (default: #{opts[:position]}). See `alphasign list-positions`.") { |v| opts[:position] = v }
         p.on("-s", "--speed SPEED", Integer, "Speed 1 (slowest) to 5 (fastest)") { |v| opts[:speed] = v }
-        p.on("-c", "--color COLOR", "Named color or RRGGBB hex. See `alphasign list-colors`.") { |v| opts[:color] = v }
+        p.on("-c", "--color COLOR", "Named color. See `alphasign list-colors`.") { |v| opts[:color] = v }
         p.on("--priority", "Show as priority text, overriding all other messages") { opts[:priority] = true }
       end
       parser.parse!(argv)
@@ -153,6 +158,7 @@ module AlphaSign
         Examples:
           alphasign send --device /dev/ttyUSB0 "Hello, world!"
           alphasign send -d /dev/ttyUSB0 -m rotate -c red -s 3 "Sale ends Friday"
+          alphasign send -d /dev/ttyUSB0 -m twinkle -c rainbow1 "Big news!"
           alphasign send -d /dev/ttyUSB0 --dry-run "test message"
           alphasign clear -d /dev/ttyUSB0
 

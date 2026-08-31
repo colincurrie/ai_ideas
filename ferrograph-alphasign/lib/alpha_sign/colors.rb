@@ -1,53 +1,41 @@
+# Colour codes as documented in the XDF firmware user guide (section 3.21,
+# "Supported Colour Codes"). The Ferrograph Aurora 63 is a 2-colour
+# (red/green) matrix, so several named entries below produce identical
+# output on the wire, and colours listed as "Alpha defined effect" variants
+# of Dim Red/Dim Green/Brown/Orange collapse visually to plain
+# red/green/yellow on this hardware, exactly as on genuine 2-line Alpha
+# 4000-series signs. There is no RGB/hex colour support on this hardware -
+# unlike RGB-pixel signs (e.g. Betabrite Prism), XDF only defines this fixed
+# set of single-character colour codes after the 0x1C control code.
 module AlphaSign
   module Colors
-    RED       = "\x1C1"
-    GREEN     = "\x1C2"
-    AMBER     = "\x1C3"
-    DIM_RED   = "\x1C4"
-    DIM_GREEN = "\x1C5"
-    BROWN     = "\x1C6"
-    ORANGE    = "\x1C7"
-    YELLOW    = "\x1C8"
-    RAINBOW_1 = "\x1C9"
-    RAINBOW_2 = "\x1CA"
-    COLOR_MIX = "\x1CB"
-    AUTOCOLOR = "\x1CC"
-
     NAMES = {
-      "red" => RED, "green" => GREEN, "amber" => AMBER,
-      "dim_red" => DIM_RED, "dim_green" => DIM_GREEN, "brown" => BROWN,
-      "orange" => ORANGE, "yellow" => YELLOW, "rainbow1" => RAINBOW_1,
-      "rainbow2" => RAINBOW_2, "mix" => COLOR_MIX, "auto" => AUTOCOLOR
+      "red" => "1", "green" => "2", "amber" => "3",
+      "dim_red" => "4", "dim_green" => "5", "brown" => "6", "orange" => "7",
+      "yellow" => "8",
+      "rainbow1" => "9", "rainbow2" => "A", "mix" => "B", "auto" => "C",
+      "stripe_red_green_red" => "D", "stripe_green_red_green" => "E",
+      "stripe_red_yellow_red" => "F", "stripe_yellow_red_yellow" => "G",
+      "stripe_green_yellow_green" => "H", "stripe_yellow_green_yellow" => "I",
+      "rainbow1a" => "J", "rainbow1c" => "K", "rainbow2a" => "L",
+      "rainbow2b" => "M", "rainbow2c" => "N", "rainbow1_staggered" => "O",
+      "auto_offset1" => "P", "auto_offset2" => "Q",
+      "rainbow1_sequenced" => "R", "rainbow2_sequenced" => "S",
+      "rainbow1_sequenced_staggered" => "T", "rainbow2_sequenced_staggered" => "U",
+      "mix_sequenced" => "V", "auto_fancy" => "W", "auto_plain" => "X",
+      "small_rainbow1" => "a", "small_rainbow2" => "b", "small_rainbow3" => "c",
+      "small_rainbow_staggered" => "d", "small_rainbow_sequenced" => "e",
+      "small_rainbow_sequenced_staggered" => "f",
+      "small_stripe_red_green" => "g", "small_stripe_green_red" => "h",
+      "small_stripe_red_yellow" => "i", "small_stripe_yellow_red" => "j",
+      "small_stripe_green_yellow" => "k", "small_stripe_yellow_green" => "l"
     }.freeze
 
-    HEX_RE = /\A#?([0-9A-Fa-f]{6})\z/
-
-    # Full-color RGB, for signs with RGB/tri-color pixels. +hex+ is "RRGGBB",
-    # an optional leading "#" is stripped.
-    def self.rgb(hex)
-      match = HEX_RE.match(hex)
-      raise ArgumentError, "expected a 6-digit hex color like RRGGBB, got #{hex.inspect}" unless match
-
-      "\x1CZ#{match[1].upcase}"
-    end
-
-    # Shadow/outline RGB color, layered behind the primary color set with
-    # +rgb+.
-    def self.shadow_rgb(hex)
-      match = HEX_RE.match(hex)
-      raise ArgumentError, "expected a 6-digit hex color like RRGGBB, got #{hex.inspect}" unless match
-
-      "\x1CY#{match[1].upcase}"
-    end
-
-    # Accepts either a named color (see NAMES) or a bare/`#`-prefixed
-    # RRGGBB hex string.
     def self.lookup(name)
-      return rgb(name) if HEX_RE.match?(name)
-
-      NAMES.fetch(name.downcase) do
-        raise ArgumentError, "unknown color #{name.inspect}; known colors: #{NAMES.keys.join(', ')}, or a RRGGBB hex value"
+      code = NAMES.fetch(name.downcase) do
+        raise ArgumentError, "unknown color #{name.inspect}; known colors: #{NAMES.keys.join(', ')}"
       end
+      "\x1C#{code}"
     end
   end
 end
