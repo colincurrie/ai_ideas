@@ -205,12 +205,21 @@ text and apply a color/font from the toolbar to highlight parts of it,
 choose position/effect/speed, then Preview (see the bytes without
 sending) or Send.
 
-The Image card resizes and dithers whatever you upload to the sign's
-red/green/yellow palette entirely in your browser (Floyd-Steinberg
-dithering on an HTML canvas) - `serial_api` never sees raw image bytes,
-only the final pixel grid. It shows a live preview and the estimated LED
-load percentage before you send anything, and blocks (with a clear "send
-anyway" override) if that load exceeds the sign's 50% safety limit.
+The Image card resizes whatever you upload and maps it to the sign's
+red/green/yellow palette entirely in your browser (HTML canvas) -
+`serial_api` never sees raw image bytes, only the final pixel grid. It
+shows a live preview and the estimated LED load percentage before you send
+anything, and blocks (with a clear "send anyway" override) if that load
+exceeds the sign's 50% safety limit.
+
+Two colour-mapping modes, and the choice matters a lot:
+
+- **Dither** (Floyd-Steinberg error diffusion) - for photos and gradients,
+  where mixing adjacent pixels approximates tones the sign can't display
+  directly.
+- **Solid** (straight nearest-colour) - for text and logos. Dithering
+  high-contrast graphics turns crisp letterforms into unreadable speckle,
+  so anything word-shaped wants this instead.
 
 For actually deploying this on a Raspberry Pi wired to the sign, with
 systemd units and Tailscale for remote access, see **`DEPLOY.md`**.

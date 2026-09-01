@@ -155,7 +155,7 @@
 
   <div class="card">
     <label style="margin-bottom:0.5rem;">Image</label>
-    <p class="muted">Resized and dithered to the sign's red/green/yellow palette right here in your browser - nothing is sent until you hit Preview or Send. <strong>Sending an image reconfigures the sign's memory</strong> (see Known limitations in the README) - existing text labels are kept only if "Keep existing text labels" is checked.</p>
+    <p class="muted">Resized and mapped to the sign's red/green/yellow palette right here in your browser - nothing is sent until you hit Preview or Send. Use <em>Dither</em> for photos and gradients, <em>Solid</em> for text and logos (dithering shreds high-contrast edges into speckle). <strong>Sending an image reconfigures the sign's memory</strong> (see Known limitations in the README) - existing text labels are kept only if "Keep existing text labels" is checked.</p>
     <div class="row">
       <div>
         <label for="image-file">Choose file</label>
@@ -174,6 +174,13 @@
       <div>
         <label for="image-height">Height (px)</label>
         <input type="number" id="image-height" value="16" min="1" max="32" style="width:5rem;">
+      </div>
+      <div>
+        <label for="image-dither">Colour mapping</label>
+        <select id="image-dither">
+          <option value="dither">Dither (photos)</option>
+          <option value="solid">Solid (text &amp; logos)</option>
+        </select>
       </div>
       <div>
         <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.9rem;color:#e8e8e8;margin-top:1.2rem;">

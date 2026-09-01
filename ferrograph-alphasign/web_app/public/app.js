@@ -324,10 +324,16 @@ document.getElementById("raw-send-btn").addEventListener("click", () => sendRaw(
 // Everything from file load through dithering happens in the browser -
 // serial_api never sees raw image bytes, only the final width/height/pixel
 // grid, which keeps that service free of any image-processing dependency.
-// The palette approximates the sign's real red/green/yellow LEDs closely
-// enough for perceptually reasonable dithering; it doesn't need to be exact.
-
-const DOTS_PALETTE = { off: [0, 0, 0], red: [255, 50, 50], green: [50, 220, 90], yellow: [230, 195, 30] };
+// Two separate palettes on purpose:
+//
+// MATCHING uses the sign's actual LED primaries - a pixel is red LED on,
+// green LED on, both (yellow), or neither. Using softened "nice looking"
+// values here instead skews the colour maths badly: with a muted yellow,
+// plain white ends up nearer to green than to yellow in RGB distance, even
+// though yellow (both LEDs lit) is the brightest thing the sign can do.
+// PREVIEW is only for drawing the on-screen preview, where the softer
+// colours are easier on the eye.
+const DOTS_MATCH_PALETTE = { off: [0, 0, 0], red: [255, 0, 0], green: [0, 255, 0], yellow: [255, 255, 0] };
 const DOTS_ORDER = ["off", "red", "green", "yellow"]; // index == the wire's pixel digit code
 const DOTS_PREVIEW_COLORS = ["#000", "#ff5a5a", "#5aff8a", "#ffe45a"];
 
@@ -337,7 +343,7 @@ function nearestDotsColorIndex(r, g, b) {
   let best = 0;
   let bestDist = Infinity;
   DOTS_ORDER.forEach((name, i) => {
-    const [pr, pg, pb] = DOTS_PALETTE[name];
+    const [pr, pg, pb] = DOTS_MATCH_PALETTE[name];
     const dist = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2;
     if (dist < bestDist) {
       bestDist = dist;
@@ -361,11 +367,16 @@ function distributeError(buf, width, height, x, y, er, eg, eb) {
   add(x + 1, y + 1, 1 / 16);
 }
 
-// Floyd-Steinberg dithering down to the 4-color dots palette. Returns a
-// flat array of palette indices (0=off, 1=red, 2=green, 3=yellow), one per
-// pixel, row-major - same layout the wire format and the preview canvas
-// both want.
-function ditherToDots(imageData, width, height) {
+// Quantizes down to the 4-color dots palette. Returns a flat array of
+// palette indices (0=off, 1=red, 2=green, 3=yellow), one per pixel,
+// row-major - same layout the wire format and the preview canvas both want.
+//
+// +dither+ picks the trade-off: Floyd-Steinberg error diffusion approximates
+// in-between tones by mixing pixels, which is what you want for photos and
+// gradients, but it shreds high-contrast graphics - text and logos come out
+// as red/green confetti instead of readable shapes. With dithering off it's
+// a straight nearest-colour map, so solid areas stay solid.
+function ditherToDots(imageData, width, height, dither = true) {
   const buf = new Float32Array(width * height * 3);
   for (let i = 0; i < width * height; i++) {
     buf[i * 3] = imageData.data[i * 4];
@@ -382,7 +393,9 @@ function ditherToDots(imageData, width, height) {
       const b = buf[idx * 3 + 2];
       const code = nearestDotsColorIndex(r, g, b);
       codes[idx] = code;
-      const [pr, pg, pb] = DOTS_PALETTE[DOTS_ORDER[code]];
+      if (!dither) continue;
+
+      const [pr, pg, pb] = DOTS_MATCH_PALETTE[DOTS_ORDER[code]];
       distributeError(buf, width, height, x, y, r - pr, g - pg, b - pb);
     }
   }
@@ -416,7 +429,8 @@ function processImage() {
   ctx.drawImage(loadedImage, (targetW - drawW) / 2, (targetH - drawH) / 2, drawW, drawH);
 
   const imageData = ctx.getImageData(0, 0, targetW, targetH);
-  const codes = ditherToDots(imageData, targetW, targetH);
+  const dither = document.getElementById("image-dither").value === "dither";
+  const codes = ditherToDots(imageData, targetW, targetH, dither);
 
   state.imageGrid = { width: targetW, height: targetH, pixels: Array.from(codes).join("") };
   renderImagePreview(codes, targetW, targetH);
@@ -470,6 +484,7 @@ document.getElementById("image-file").addEventListener("change", (event) => {
 
 document.getElementById("image-width").addEventListener("change", processImage);
 document.getElementById("image-height").addEventListener("change", processImage);
+document.getElementById("image-dither").addEventListener("change", processImage);
 
 async function sendImage(dryRun, force) {
   const errorEl = document.getElementById("image-error");
