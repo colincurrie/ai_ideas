@@ -150,7 +150,8 @@ differently.
 
 ## web_app
 
-The authenticated UI. Needs a few more environment variables:
+The authenticated UI. Needs a few more environment variables. Either
+`export` them each time:
 
 ```
 export SESSION_SECRET=$(ruby -rsecurerandom -e 'puts SecureRandom.hex(64)')
@@ -160,6 +161,19 @@ export SERIAL_API_URL=http://127.0.0.1:4568           # default
 export WEB_APP_SECURE_COOKIES=false                   # only for local http:// testing - leave true once behind HTTPS
 bundle exec rackup web_app/config.ru -o 127.0.0.1 -p 4567
 ```
+
+...or for local development, copy `.env.example` to `.env` and fill it in
+once - both services load it automatically (via the `dotenv` gem) from
+whatever directory you run them from (the repo root). **Wrap
+`WEB_APP_PASSWORD_HASH` in single quotes in `.env`** - bcrypt hashes are
+full of `$` characters, which `dotenv` will otherwise try to interpolate
+as shell-style variable references and silently mangle. See the comments
+in `.env.example` for the full list of variables (it covers `serial_api`
+too - one `.env` at the repo root serves both).
+
+Either way, a real exported environment variable (e.g. a systemd
+`EnvironmentFile` in production, see `DEPLOY.md`) always takes priority
+over `.env` - `dotenv` only fills in what isn't already set.
 
 Single shared login (one username/password for now - see "Known
 limitations" for what multi-user would take). Visit `http://127.0.0.1:4567`,

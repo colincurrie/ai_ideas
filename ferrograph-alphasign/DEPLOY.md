@@ -38,7 +38,12 @@ bin/hash_password
 ```
 
 Create an environment file for each service (referenced by the systemd
-units below) - `/etc/ferrograph/serial-api.env`:
+units below). Note these are systemd `EnvironmentFile`s, not `.env` files -
+paste values in **unquoted** (unlike the `.env`/`dotenv` convention used
+for local development in the README, systemd doesn't strip quote
+characters, so quoting here would make them part of the literal value).
+
+`/etc/ferrograph/serial-api.env`:
 
 ```
 SERIAL_DEVICE=/dev/ttyUSB0

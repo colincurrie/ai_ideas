@@ -1,3 +1,4 @@
+require "dotenv/load" # loads .env from the cwd (repo root, per README/DEPLOY.md) if present - never overrides already-set env vars (e.g. from systemd)
 require "sinatra/base"
 require "bcrypt"
 require "json"
