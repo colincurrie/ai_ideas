@@ -247,6 +247,116 @@ except normal messages also default to `label: "A"`, matching XDF's
 documented default memory layout (one full-page Text file per label,
 starting at `A`).
 
+## Dots Picture files and Memory Configuration
+
+Images are shown as a Small Dots Picture file (command `I`) - the only Dots
+format XDF supports: "there is no support for large (AlphaVision) Dots
+Picture files (which are not supported on the Alpha 4000 series signs,
+either), as these would add excessive overhead to the internal filesystem."
+There's no RGB dots format either - this hardware has no RGB pixels.
+
+**Provenance caveat - read this before trusting the numbers below.** XDF's
+manual just says the Dots Picture wire format is "as defined in the Alpha
+Protocol Manual" and doesn't restate it, and that manual wasn't reachable
+from this environment to verify directly (network egress to
+alpha-american.com is blocked here). `AlphaSign::DotsFile` and
+`AlphaSign::MemoryConfig` are reconstructed instead from a third-party
+open-source Alpha-protocol packet generator,
+[darinfranklin/bbxml](https://github.com/darinfranklin/bbxml)'s
+`xml/alphasign.xsl`. Confidence is reasonably good - its Run Time Table
+special values (`always`→`0xFF`, `never`→`0xFE`, `all day`→`0xFD`)
+independently match what XDF's own manual documents for the same field
+elsewhere - but this is still a lower-confidence corner of this library
+than the rest of it. Test with a small image before trusting it for
+anything that matters.
+
+### Defining a Dots file: Memory Configuration
+
+Before a label can be *written* to as a Dots Picture (or, for that matter,
+before any custom Text file sizing is needed), it has to be *defined* via
+the **Define Memory Configuration** special function (`E` + sub-code `$`,
+0x24). **This replaces the sign's entire file layout, not just the label
+being defined** - any label not included in the new configuration stops
+existing. See "Flexible Paged Memory Filesystem" above for why (each
+memory page is its own self-contained filesystem that gets wholesale
+replaced on reconfiguration).
+
+Each file gets one fixed-width entry, concatenated back to back with no
+separator (entries are self-describing by their own field widths, so the
+receiver doesn't need a count or delimiter):
+
+```
+Text file:  <label><"A"><lock: "L"/"U"><size, 4 hex digits><start time, 2 hex><stop time, 2 hex>
+Dots file:  <label><"D"><lock: "L"/"U"><height, 2 hex><width, 2 hex><colour depth, 4 chars>
+```
+
+Start/stop time reuse the same Run Time Table special values as message
+scheduling (see "Run Time / Run Day scheduling" below) - `AlphaSign::MemoryConfig::ALWAYS`
+(`"FF"`) as the start time makes a file permanently enabled and makes the
+stop time irrelevant ("if used in this way, the Stop Time is totally
+ignored," per the manual).
+
+Colour depth is a 4-character code: `"1000"` (monochrome, inherits
+whatever colour is set via the normal text colour codes), `"2000"`
+(3-colour: red/green/yellow) or `"4000"` (Alpha's 8-colour depth, which
+collapses to the same 3-colour output as `"2000"` on this 2-colour
+hardware - so `AlphaSign::MemoryConfig` only exposes `"1000"`/`"2000"`,
+via `monochrome:`).
+
+### Writing pixel data
+
+Once a label is defined as a Dots file, `I` + label + dimensions + pixel
+data updates its contents:
+
+```
+"I" <label> <height, 2 hex digits> <width, 2 hex digits> <row>...<row>
+```
+
+Each row is `width` single-character pixel codes (see below), followed by
+a literal CR (0x0D) marking the row's end - sent as the 3-byte escape
+`"_0D"` (three literal ASCII characters: `_`, `0`, `D`) rather than a raw
+0x0D byte, because a raw 0x0D is the New Line control code (Appendix A)
+and would be misinterpreted as one if sent literally inside message data.
+
+Per-pixel colour codes (bare digits, no `0x1C` prefix - contrast with text
+colours):
+
+| Code | Colour | Alpha-defined |
+|---|---|---|
+| `0` | Off | Off |
+| `1` | Red | Red |
+| `2` | Green | Green |
+| `3` | Yellow | Amber |
+| `4`-`8` | (collapse to Red/Green/Yellow, same pattern as text colours) | Dim Red/Dim Green/Brown/Orange/Yellow |
+
+`AlphaSign::DotsColors` only exposes the 4 practically-distinct codes, same
+reasoning as `AlphaSign::Colors`.
+
+Protocol limits: 32 rows (height) x 255 columns (width) maximum. The
+Aurora 63 is a 16-pixel-tall, 135-pixel-wide matrix, so a picture larger
+than that either gets cropped (fixed-format effects) or scrolls through in
+full (Rotate/travelling effect).
+
+### LED safety - the one hard constraint here
+
+The manual is explicit and physical about this one, not just a protocol
+nicety:
+
+> The Ferrograph Display Hardware is NOT designed to cope with the
+> excessive loading that would result if too many LEDs are turned on
+> simultaneously... it is recommended that no more than 50% of LED chips
+> are illuminated simultaneously. Remember that the yellow colour is
+> actually a mix of red and green, so each yellow dot counts as two chips.
+
+`AlphaSign::DotsFile#lit_chip_fraction` implements exactly this weighting
+(yellow = 2 chips, red/green = 1, off = 0, against a denominator of 2 per
+pixel = "every pixel yellow"). `serial_api`'s `POST /image` refuses to
+send anything over 50% unless `force: true` is passed, and the web app's
+client-side dithering computes and displays the same number before the
+user even hits Send - see `web_app/public/app.js`'s `updateChipFraction`.
+This is enforced server-side (not just in the UI) deliberately, since it's
+a physical safety constraint, not a preference.
+
 ## Priority Text File and Timeout Message
 
 Two special, fixed-size (128 byte), single-buffered message slots that sit
@@ -310,6 +420,10 @@ beyond the control codes themselves.
 Source: Ferrograph *Extended Display Firmware User Guide*, v4.26
 (supplied directly by the display owner - not redistributed here).
 Cross-checked in places against the public
-[msparks/alphasign](https://github.com/msparks/alphasign) Python library
-and the [Alpha-American protocol manual](https://www.alpha-american.com/alpha-manuals/M-Protocol.pdf)
-for the parts of the base Alpha protocol XDF doesn't restate.
+[msparks/alphasign](https://github.com/msparks/alphasign) Python library,
+the [Alpha-American protocol manual](https://www.alpha-american.com/alpha-manuals/M-Protocol.pdf)
+for the parts of the base Alpha protocol XDF doesn't restate, and
+[darinfranklin/bbxml](https://github.com/darinfranklin/bbxml) for the Dots
+Picture/Memory Configuration wire format specifically (see "Dots Picture
+files and Memory Configuration" above for the confidence caveat that
+applies only to that section).

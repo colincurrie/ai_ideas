@@ -74,6 +74,10 @@
   details summary { cursor: pointer; color: #aaa; font-size: 0.9rem; }
   .muted { color: #777; font-size: 0.8rem; }
   .error-msg { color: #ff8f94; font-size: 0.85rem; margin-top: 0.5rem; }
+  .chip-ok { color: #4caf6a; font-size: 0.85rem; }
+  .chip-warning { color: #ff8f94; font-size: 0.85rem; font-weight: 600; }
+  input[type=file] { color: #e8e8e8; font-size: 0.85rem; }
+  input[type=number] { width: 5rem; }
 </style>
 </head>
 <body>
@@ -147,6 +151,45 @@
     </div>
     <div class="error-msg" id="compose-error"></div>
     <pre class="bytes" id="bytes-preview" hidden></pre>
+  </div>
+
+  <div class="card">
+    <label style="margin-bottom:0.5rem;">Image</label>
+    <p class="muted">Resized and dithered to the sign's red/green/yellow palette right here in your browser - nothing is sent until you hit Preview or Send. <strong>Sending an image reconfigures the sign's memory</strong> (see Known limitations in the README) - existing text labels are kept only if "Keep existing text labels" is checked.</p>
+    <div class="row">
+      <div>
+        <label for="image-file">Choose file</label>
+        <input type="file" id="image-file" accept="image/*">
+      </div>
+      <div>
+        <label for="image-label">Label</label>
+        <select id="image-label"></select>
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label for="image-width">Width (px)</label>
+        <input type="number" id="image-width" value="135" min="1" max="255" style="width:5rem;">
+      </div>
+      <div>
+        <label for="image-height">Height (px)</label>
+        <input type="number" id="image-height" value="16" min="1" max="32" style="width:5rem;">
+      </div>
+      <div>
+        <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.9rem;color:#e8e8e8;margin-top:1.2rem;">
+          <input type="checkbox" id="image-keep-text" checked style="width:auto;"> Keep existing text labels
+        </label>
+      </div>
+    </div>
+    <canvas id="image-preview-canvas" style="border:1px solid #3a3f4b;border-radius:6px;background:#000;image-rendering:pixelated;display:block;"></canvas>
+    <div id="image-chip-fraction" class="muted" style="margin-top:0.5rem;"></div>
+    <div class="actions">
+      <button type="button" id="image-preview-btn">Preview</button>
+      <button type="button" id="image-send-btn" class="primary">Send</button>
+      <button type="button" id="image-force-btn" class="danger" hidden>Send anyway (override LED safety check)</button>
+    </div>
+    <div class="error-msg" id="image-error"></div>
+    <pre class="bytes" id="image-bytes-preview" hidden></pre>
   </div>
 
   <div class="card">

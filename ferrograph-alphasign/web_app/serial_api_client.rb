@@ -34,7 +34,10 @@ module WebApp
 
     def request(req)
       http = Net::HTTP.new(@base.host, @base.port)
-      http.read_timeout = 5
+      # Generous on purpose: a full-size image at the slowest supported baud
+      # (2400) can take ~10s just to transmit the pixel data, plus serial_api's
+      # deliberate 1s pause between the memory-config and picture-data writes.
+      http.read_timeout = 30
       http.open_timeout = 3
       res = http.request(req)
       body = res.body.to_s.empty? ? {} : JSON.parse(res.body, symbolize_names: true)

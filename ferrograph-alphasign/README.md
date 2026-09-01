@@ -21,7 +21,8 @@ Three pieces, all sharing one protocol library:
 ```
 
 - **`lib/alpha_sign`** - the protocol itself: packet framing, colors,
-  effects/modes, fonts, positions, speeds. No I/O beyond the serial write.
+  effects/modes, fonts, positions, speeds, dots pictures/memory
+  configuration. No I/O beyond the serial write.
 - **`bin/alphasign`** - a CLI for sending messages directly, useful for
   testing and one-off use without running any servers.
 - **`serial_api/`** - a small Sinatra service that owns the serial port
@@ -142,11 +143,33 @@ Endpoints (all JSON):
 | POST | `/priority` | same shape as `/messages`, targets the Priority Text File (label `0`) |
 | DELETE | `/priority` | clear the priority override |
 | POST | `/raw` | `{command_code, data, type, address, dry_run}` - escape hatch for anything not wrapped above |
+| POST | `/image` | `{label, width, height, pixels, keep_text_labels, monochrome, force, dry_run}` - display an image (see "Images" below) |
 
 `position`/`mode`/`speed` apply to the whole message (that's a protocol
 constraint, not an API limitation - see `docs/xdf-firmware-notes.md`);
 `color`/`font` are per-run, letting you highlight parts of a message
 differently.
+
+### Images
+
+**Unlike `/messages`, `/image` reconfigures the sign's entire memory
+layout** - the sign's Dots Picture format requires a label to be defined
+as such before it can be written to, and defining memory replaces every
+label, not just the new one (see `docs/xdf-firmware-notes.md`, "Dots
+Picture files and Memory Configuration" - including a provenance caveat:
+this part of the protocol is reconstructed from a third-party source, not
+the official Alpha manual, so test with a small image first). By default
+`/image` re-includes every text label `serial_api` currently knows about
+in the new configuration (`keep_text_labels: true`) so existing messages
+survive; set it to `false` to dedicate the whole display to just the
+image.
+
+`pixels` is a flat string of `width * height` characters, row-major, each
+one of `0` (off), `1` (red), `2` (green), `3` (yellow) - see
+`AlphaSign::DotsColors`. The sign's hardware isn't built to sustain more
+than 50% of its LED chips lit at once (yellow counts as two - it's
+red+green together); `/image` computes this and refuses to send with a
+422 unless `force: true` is passed.
 
 ## web_app
 
@@ -182,6 +205,13 @@ text and apply a color/font from the toolbar to highlight parts of it,
 choose position/effect/speed, then Preview (see the bytes without
 sending) or Send.
 
+The Image card resizes and dithers whatever you upload to the sign's
+red/green/yellow palette entirely in your browser (Floyd-Steinberg
+dithering on an HTML canvas) - `serial_api` never sees raw image bytes,
+only the final pixel grid. It shows a live preview and the estimated LED
+load percentage before you send anything, and blocks (with a clear "send
+anyway" override) if that load exceeds the sign's 50% safety limit.
+
 For actually deploying this on a Raspberry Pi wired to the sign, with
 systemd units and Tailscale for remote access, see **`DEPLOY.md`**.
 
@@ -215,6 +245,16 @@ ruby -Ilib -Itest test/alpha_sign/packet_test.rb
 - **Single shared login.** Fine for personal/family use; would need a real
   user table (and probably per-user audit logging of who sent what) to
   become multi-account.
+- **Image support is web_app only** - the CLI (`bin/alphasign`) can't send
+  images. It would need a real Ruby image-decoding dependency (the web app
+  avoids one entirely by doing resize/dither in the browser); happy to add
+  if wanted.
+- **Dots Picture/Memory Configuration protocol is lower-confidence than
+  the rest of this library** - reconstructed from a third-party source
+  rather than the official Alpha manual (which wasn't reachable to verify
+  directly). See `docs/xdf-firmware-notes.md`'s "Dots Picture files and
+  Memory Configuration" section for specifics; test with a small image
+  before trusting it for anything that matters.
 - Not yet wrapped in the API, though the protocol supports all of them
   (see `docs/xdf-firmware-notes.md`): run-time/day scheduling (show a
   message only during certain hours/days), the Timeout Message (a

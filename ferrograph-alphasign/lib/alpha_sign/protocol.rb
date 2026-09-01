@@ -22,12 +22,15 @@ module AlphaSign
     READ_SPECIAL     = "F" # Read SPECIAL FUNCTION commands
     WRITE_STRING     = "G" # Write STRING
     READ_STRING      = "H" # Read STRING
-    WRITE_SMALL_DOTS = "I" # Write SMALL DOTS PICTURE file
-    READ_SMALL_DOTS  = "J" # Read SMALL DOTS PICTURE file
-    WRITE_RGB_DOTS   = "K" # Write RGB DOTS PICTURE file
-    READ_RGB_DOTS    = "L" # Read RGB DOTS PICTURE file
-    WRITE_LARGE_DOTS = "M" # Write LARGE DOTS PICTURE file
-    READ_LARGE_DOTS  = "N" # Read LARGE DOTS PICTURE file
+    WRITE_SMALL_DOTS = "I" # Write SMALL DOTS PICTURE file - the only Dots
+    READ_SMALL_DOTS  = "J" # Read SMALL DOTS PICTURE file  - format XDF supports
+    # WRITE_RGB_DOTS/READ_RGB_DOTS/WRITE_LARGE_DOTS/READ_LARGE_DOTS ("K"-"N")
+    # are deliberately not defined here: XDF explicitly does not support
+    # large (AlphaVision) Dots Picture files, and this hardware has no RGB
+    # pixels to support RGB dots either (see docs/xdf-firmware-notes.md).
+
+    # Special Function sub-codes (the byte after WRITE_SPECIAL/READ_SPECIAL)
+    MEMORY_CONFIG = "$" # Define/Report Memory Configuration (0x24)
 
     # Type code: which sign(s) a packet is addressed to. "Z" (all types) with
     # address "00" (broadcast) is the standard way to talk to a single sign

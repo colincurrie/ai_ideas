@@ -155,5 +155,9 @@ module WebApp
     post "/api/raw" do
       proxy(:post, "/raw", parsed_body)
     end
+
+    post "/api/image" do
+      proxy(:post, "/image", parsed_body)
+    end
   end
 end

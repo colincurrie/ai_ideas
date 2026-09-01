@@ -87,6 +87,25 @@ module SerialApi
           priority: priority_override.nil? ? truthy?(body[:priority]) : priority_override
         )
       end
+
+      def required_positive_int(body, key)
+        value = body[key]
+        halt 400, { ok: false, error: "#{key} is required" }.to_json if value.nil?
+
+        int = Integer(value)
+        halt 400, { ok: false, error: "#{key} must be positive" }.to_json unless int.positive?
+        int
+      rescue ArgumentError, TypeError
+        halt 400, { ok: false, error: "#{key} must be an integer" }.to_json
+      end
+
+      # Best-effort size estimate for a previously-sent text label being
+      # carried forward into a new Memory Configuration - there's no
+      # tracked "defined size" for it (only the content last sent), so
+      # this pads generously rather than trying to be exact.
+      def estimate_text_size(meta)
+        AlphaSign::Runs.encode(meta[:runs] || []).bytesize + 64
+      end
     end
 
     error ArgumentError do
@@ -109,7 +128,8 @@ module SerialApi
         modes: AlphaSign::Modes::NAMES.keys.sort,
         colors: AlphaSign::Colors::NAMES.keys.sort,
         positions: AlphaSign::Positions::NAMES.keys.sort,
-        fonts: AlphaSign::CharSets::NAMES.keys.sort
+        fonts: AlphaSign::CharSets::NAMES.keys.sort,
+        dots_colors: AlphaSign::DotsColors::NAMES.keys
       }.to_json
     end
 
@@ -164,6 +184,95 @@ module SerialApi
       )
       result = send_or_report(packet, dry_run: truthy?(body[:dry_run]))
       result.to_json
+    end
+
+    # Displays an image as a Small Dots Picture. Unlike /messages, this
+    # sends TWO packets: a Memory Configuration defining the label as a
+    # Dots file (which - important - replaces the sign's ENTIRE file
+    # layout, not just this label), then the actual pixel data. See
+    # AlphaSign::DotsFile/MemoryConfig for the protocol-provenance caveat.
+    post "/image" do
+      body = json_body
+      label = (body[:label] || "P").to_s
+      width = required_positive_int(body, :width)
+      height = required_positive_int(body, :height)
+      pixels = body[:pixels].to_s
+      expected_length = width * height
+      if pixels.length != expected_length
+        halt 400, { ok: false, error: "pixels must be exactly width*height characters (#{expected_length}), got #{pixels.length}" }.to_json
+      end
+
+      rows = pixels.chars.each_slice(width).map(&:join)
+      dots = AlphaSign::DotsFile.new(rows, label: label)
+      chip_fraction = dots.lit_chip_fraction
+
+      if chip_fraction > 0.5 && !truthy?(body[:force])
+        halt 422, {
+          ok: false,
+          error: format(
+            "this image would light about %<pct>d%% of LED chips at once - XDF's manual warns against " \
+            "sustaining more than 50%% to avoid thermal damage. Reduce brightness/coverage, or pass " \
+            "force:true to send anyway.", pct: (chip_fraction * 100).round
+          ),
+          lit_chip_fraction: chip_fraction
+        }.to_json
+      end
+
+      keep_text_labels = truthy?(body.fetch(:keep_text_labels, true))
+      memory_config = AlphaSign::MemoryConfig.new
+      if keep_text_labels
+        settings.sent_messages.each do |existing_label, meta|
+          next if existing_label == label || existing_label == "0" # "0" is the Priority Text File - not a real memory-config slot
+          size = [estimate_text_size(meta), 256].max
+          memory_config.text_file(existing_label, size: size)
+        end
+      end
+      memory_config.dots_file(label, height: height, width: width, monochrome: truthy?(body[:monochrome]), locked: truthy?(body[:locked]))
+
+      type = body[:type] || Config.type
+      address = body[:address] || Config.address
+      config_packet = memory_config.to_packet(type: type, address: address)
+      dots_packet = dots.to_packet(type: type, address: address)
+
+      if truthy?(body[:dry_run])
+        halt 200, {
+          ok: true, dry_run: true,
+          memory_config_bytes_hex: config_packet.to_hex, dots_bytes_hex: dots_packet.to_hex,
+          lit_fraction: dots.lit_fraction, lit_chip_fraction: chip_fraction
+        }.to_json
+      end
+
+      begin
+        settings.conn_mutex.synchronize do
+          settings.connection.write(config_packet)
+          # XDF blanks the display and defragments/reconfigures memory on
+          # a Memory Config write - give it a moment before the picture
+          # data arrives rather than risk it queuing mid-reconfiguration.
+          sleep 1
+          settings.connection.write(dots_packet)
+        end
+      rescue StandardError, LoadError => e
+        # LoadError isn't a StandardError - see send_or_report's comment
+        # on the same rescue clause for why it's caught here too.
+        settings.last_error = e.message
+        halt 502, { ok: false, error: e.message }.to_json
+      end
+      settings.last_error = nil
+
+      # The memory config just replaced the sign's whole file layout, so
+      # our tracked state needs to match: everything except the new image
+      # is gone (or was explicitly re-included above, in which case it's
+      # still real on the sign - just re-add it to keep GET /messages
+      # accurate).
+      preserved = keep_text_labels ? settings.sent_messages.reject { |l, _| l == label || l == "0" } : {}
+      settings.sent_messages.clear
+      settings.sent_messages.merge!(preserved)
+      settings.sent_messages[label] = { type: "image", width: width, height: height, sent_at: Time.now.utc.iso8601 }
+
+      {
+        ok: true, label: label, lit_fraction: dots.lit_fraction, lit_chip_fraction: chip_fraction,
+        memory_config_bytes_hex: config_packet.to_hex, dots_bytes_hex: dots_packet.to_hex
+      }.to_json
     end
   end
 end
