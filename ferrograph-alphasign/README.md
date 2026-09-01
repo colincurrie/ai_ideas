@@ -90,6 +90,7 @@ bin/alphasign raw [options] COMMAND_CODE [DATA]
 bin/alphasign list-modes
 bin/alphasign list-colors
 bin/alphasign list-positions
+bin/alphasign list-fonts
 ```
 
 Examples:
@@ -104,6 +105,10 @@ bin/alphasign send -d /dev/ttyUSB0 -m rotate -c red -s 3 "Sale ends Friday"
 # One of XDF's many extended effects, in a rainbow colour
 bin/alphasign send -d /dev/ttyUSB0 -m twinkle -c rainbow1 "Big news!"
 
+# A large font (the CLI applies one font/color for the whole message; the
+# web app's compose UI supports mixing multiple per selection)
+bin/alphasign send -d /dev/ttyUSB0 -f large_standard "BIG TEXT"
+
 # See the exact bytes that would be sent, without opening the serial port
 bin/alphasign send -d /dev/ttyUSB0 --dry-run "test message"
 
@@ -112,7 +117,7 @@ bin/alphasign clear -d /dev/ttyUSB0
 ```
 
 Run `bin/alphasign send --help` for the full list of options (label,
-position, mode, speed, color, priority, serial parameters, sign
+position, mode, speed, color, font, priority, serial parameters, sign
 address/type).
 
 ## serial_api

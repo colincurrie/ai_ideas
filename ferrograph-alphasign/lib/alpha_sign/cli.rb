@@ -15,6 +15,7 @@ module AlphaSign
       when "list-modes" then list(Modes::NAMES)
       when "list-colors" then list(Colors::NAMES)
       when "list-positions" then list(Positions::NAMES)
+      when "list-fonts" then list(CharSets::NAMES)
       when "-h", "--help", nil then print_help
       else
         warn "Unknown command: #{command.inspect}\n\n"
@@ -66,6 +67,7 @@ module AlphaSign
         p.on("-p", "--position POSITION", "Display position (default: #{opts[:position]}). See `alphasign list-positions`.") { |v| opts[:position] = v }
         p.on("-s", "--speed SPEED", Integer, "Speed 1 (slowest) to 5 (fastest)") { |v| opts[:speed] = v }
         p.on("-c", "--color COLOR", "Named color. See `alphasign list-colors`.") { |v| opts[:color] = v }
+        p.on("-f", "--font FONT", "Named character set/font. See `alphasign list-fonts`.") { |v| opts[:font] = v }
         p.on("--priority", "Show as priority text, overriding all other messages") { opts[:priority] = true }
       end
       parser.parse!(argv)
@@ -79,6 +81,7 @@ module AlphaSign
       prefix = +""
       prefix << Speeds.lookup(opts[:speed]) if opts[:speed]
       prefix << Colors.lookup(opts[:color]) if opts[:color]
+      prefix << CharSets.lookup(opts[:font]) if opts[:font]
 
       text_file = TextFile.new(prefix + message,
                                 label: opts[:label],
@@ -154,11 +157,13 @@ module AlphaSign
           alphasign list-modes
           alphasign list-colors
           alphasign list-positions
+          alphasign list-fonts
 
         Examples:
           alphasign send --device /dev/ttyUSB0 "Hello, world!"
           alphasign send -d /dev/ttyUSB0 -m rotate -c red -s 3 "Sale ends Friday"
           alphasign send -d /dev/ttyUSB0 -m twinkle -c rainbow1 "Big news!"
+          alphasign send -d /dev/ttyUSB0 -f large_standard "BIG TEXT"
           alphasign send -d /dev/ttyUSB0 --dry-run "test message"
           alphasign clear -d /dev/ttyUSB0
 
