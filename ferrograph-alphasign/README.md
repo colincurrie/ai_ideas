@@ -137,32 +137,71 @@ Endpoints (all JSON):
 |---|---|---|
 | GET | `/status` | connection health: device, baud, address/type, last error |
 | GET | `/options` | valid modes/colors/positions/fonts, for populating a UI |
-| GET | `/messages` | labels sent since this process started (server-tracked, not read back from the sign - see "Known limitations") |
-| POST | `/messages` | `{label, position, mode, speed, priority, runs, dry_run}` - write/update a text file. `runs` is `[{text, color, font}, ...]`; `dry_run: true` returns the hex bytes without opening the port |
+| GET | `/files` | everything the sign is holding, by type: `{text: {...}, strings: {...}, dots: {...}} `|
+| GET | `/messages` | just the text files (server-tracked, not read back from the sign - see "Known limitations") |
+| POST | `/messages` | `{label, position, mode, speed, priority, runs, dry_run}` - write/update a text file. `dry_run: true` returns the hex bytes without opening the port |
 | DELETE | `/messages/:label` | blank that label (`?dry_run=true` supported) |
-| POST | `/priority` | same shape as `/messages`, targets the Priority Text File (label `0`) |
+| POST | `/strings` | `{label, text, dry_run}` - write/update a string file |
+| DELETE | `/strings/:label` | empty that string |
+| POST | `/image` | `{label, width, height, pixels, monochrome, force, dry_run}` - store a dots picture (see "Images" below) |
+| DELETE | `/image/:label` | drop that picture from the layout |
+| POST | `/priority` | same shape as `/messages`, targets the Priority Text File |
 | DELETE | `/priority` | clear the priority override |
 | POST | `/raw` | `{command_code, data, type, address, dry_run}` - escape hatch for anything not wrapped above |
-| POST | `/image` | `{label, width, height, pixels, keep_text_labels, monochrome, force, dry_run}` - display an image (see "Images" below) |
+
+### The three file types
+
+This is the single most important thing to understand about the sign, and
+getting it wrong is what makes a display mysteriously go blank:
+
+- **Text files** are the only files the sign *displays*. They take part in
+  its run sequence.
+- **String files** and **dots picture files** are inert on their own.
+  Writing one just stores it in memory. It reaches the display solely
+  because a text file *calls* it inline, at a specific point in its
+  content.
+
+So `runs` on `/messages` is a list of pieces, each one of:
+
+```json
+{"text": "SALE", "color": "red", "font": "large_standard"}
+{"type": "string", "label": "1"}
+{"type": "image",  "label": "P"}
+```
 
 `position`/`mode`/`speed` apply to the whole message (that's a protocol
 constraint, not an API limitation - see `docs/xdf-firmware-notes.md`);
 `color`/`font` are per-run, letting you highlight parts of a message
 differently.
 
-### Images
+File labels are one shared namespace across all three types - a memory
+configuration lists each label once, with a type - so the same label can't
+be both a text file and a picture. The API rejects that with a 400 rather
+than sending the sign a contradictory layout.
 
-**Unlike `/messages`, `/image` reconfigures the sign's entire memory
-layout** - the sign's Dots Picture format requires a label to be defined
-as such before it can be written to, and defining memory replaces every
-label, not just the new one (see `docs/xdf-firmware-notes.md`, "Dots
-Picture files and Memory Configuration" - including a provenance caveat:
-this part of the protocol is reconstructed from a third-party source, not
-the official Alpha manual, so test with a small image first). By default
-`/image` re-includes every text label `serial_api` currently knows about
-in the new configuration (`keep_text_labels: true`) so existing messages
-survive; set it to `false` to dedicate the whole display to just the
-image.
+### Memory configuration (and why the display sometimes blanks)
+
+Defining memory replaces the sign's **entire** file layout and erases every
+file's contents, which makes it something to send as rarely as possible.
+`serial_api` tracks the layout it wants (`serial_api/layout.rb`) and:
+
+1. **Doesn't configure memory at all for text-only use.** XDF's power-on
+   default already provides a text file per label, so a text-only setup
+   never needs one - and never blanks.
+2. **Re-sends every file's contents immediately after any configuration**,
+   since they were just erased. This is what stops sending a picture from
+   wiping the message that displays it.
+3. **Rounds file sizes up to 256-byte buckets**, so ordinary edits stay
+   inside the reservation already made for them instead of forcing a
+   reconfiguration on every small change.
+
+Responses say which happened: `reconfigured: true/false`, plus
+`memory_config_bytes_hex` when one was sent. Adding the first string or
+picture, or changing the set of files, does require one; editing contents
+afterwards does not. Rewriting a **string** never does - strings are double
+buffered, which makes them the right home for anything that changes often.
+
+### Images
 
 `pixels` is a flat string of `width * height` characters, row-major, each
 one of `0` (off), `1` (red), `2` (green), `3` (yellow) - see
@@ -170,6 +209,14 @@ one of `0` (off), `1` (red), `2` (green), `3` (yellow) - see
 than 50% of its LED chips lit at once (yellow counts as two - it's
 red+green together); `/image` computes this and refuses to send with a
 422 unless `force: true` is passed.
+
+`POST /image` only *stores* the picture. To actually show it, send a
+message whose `runs` include `{"type": "image", "label": "P"}`.
+
+The dots picture and memory configuration wire formats are reconstructed
+from a third-party source rather than the official Alpha manual - see
+`docs/xdf-firmware-notes.md`, "Dots Picture files and Memory
+Configuration", and test with a small image first.
 
 ## web_app
 
@@ -205,12 +252,30 @@ text and apply a color/font from the toolbar to highlight parts of it,
 choose position/effect/speed, then Preview (see the bytes without
 sending) or Send.
 
-The Image card resizes whatever you upload and maps it to the sign's
-red/green/yellow palette entirely in your browser (HTML canvas) -
-`serial_api` never sees raw image bytes, only the final pixel grid. It
-shows a live preview and the estimated LED load percentage before you send
-anything, and blocks (with a clear "send anyway" override) if that load
-exceeds the sign's 50% safety limit.
+The **Insert image** and **Insert string** buttons drop a reference chip
+into the message at the cursor. That chip is what makes a stored picture or
+string actually appear on the display (see "The three file types" above) -
+it's a call, not a copy, so re-saving the string or picture behind it
+updates what's shown without touching the message.
+
+The **Strings** card writes reusable text a message can call. Rewriting a
+string swaps its contents in without blanking the display or disturbing the
+message around it, which makes it the right place for anything that changes
+often.
+
+The Image card maps whatever you upload to the sign's red/green/yellow
+palette entirely in your browser (HTML canvas) - `serial_api` never sees
+raw image bytes, only the final pixel grid. It shows a live preview and the
+estimated LED load percentage before you send anything, and blocks (with a
+clear "send anyway" override) if that load exceeds the sign's 50% safety
+limit.
+
+Images are never scaled **up**: anything that already fits the 135x16
+display is used at its exact pixel size, so a 16x16 icon stays a 16x16
+icon rather than being blown up to fill the panel (which can only invent
+detail that isn't there, smearing whole LEDs across what were crisp edges).
+Only oversized artwork is scaled down, preserving aspect ratio. Both size
+fields stay editable if you want something else.
 
 Two colour-mapping modes, and the choice matters a lot:
 
@@ -243,7 +308,7 @@ ruby -Ilib -Itest test/alpha_sign/packet_test.rb
 
 ## Known limitations / roadmap
 
-- **`GET /messages` reflects what this server has sent, not the sign's
+- **`GET /files` reflects what this server has sent, not the sign's
   actual state** - there's no read-back sync. XDF does support reading a
   Text file's current content/status back (see
   `docs/xdf-firmware-notes.md`, "Serial readback"); worth adding if

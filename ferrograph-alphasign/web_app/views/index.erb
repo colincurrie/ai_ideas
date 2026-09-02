@@ -75,6 +75,11 @@
   .muted { color: #777; font-size: 0.8rem; }
   .error-msg { color: #ff8f94; font-size: 0.85rem; margin-top: 0.5rem; }
   .chip-ok { color: #4caf6a; font-size: 0.85rem; }
+  .ref-chip {
+    display: inline-block; background: #2b3550; border: 1px solid #4f8cff;
+    border-radius: 4px; padding: 0 0.35rem; margin: 0 0.15rem; font-size: 0.85rem;
+    color: #9db4d1; user-select: all; white-space: nowrap;
+  }
   .chip-warning { color: #ff8f94; font-size: 0.85rem; font-weight: 600; }
   input[type=file] { color: #e8e8e8; font-size: 0.85rem; }
   input[type=number] { width: 5rem; }
@@ -119,8 +124,22 @@
       <button type="button" id="clear-format">Clear formatting</button>
     </div>
 
+    <div class="toolbar">
+      <div>
+        <label for="insert-image-select">Insert image</label>
+        <select id="insert-image-select"></select>
+      </div>
+      <button type="button" id="insert-image-btn">Insert</button>
+      <div>
+        <label for="insert-string-select">Insert string</label>
+        <select id="insert-string-select"></select>
+      </div>
+      <button type="button" id="insert-string-btn">Insert</button>
+    </div>
+
     <label for="editor">Message</label>
     <div id="editor" contenteditable="true" data-placeholder="Type your message, then select text and apply a color/font&hellip;"></div>
+    <p class="muted" style="margin-top:0.4rem;">Images and strings are separate files on the sign - they only appear where a message calls them, so insert them here to display them.</p>
 
     <div class="row" style="margin-top:0.75rem;">
       <div>
@@ -155,7 +174,7 @@
 
   <div class="card">
     <label style="margin-bottom:0.5rem;">Image</label>
-    <p class="muted">Resized and mapped to the sign's red/green/yellow palette right here in your browser - nothing is sent until you hit Preview or Send. Use <em>Dither</em> for photos and gradients, <em>Solid</em> for text and logos (dithering shreds high-contrast edges into speckle). <strong>Sending an image reconfigures the sign's memory</strong> (see Known limitations in the README) - existing text labels are kept only if "Keep existing text labels" is checked.</p>
+    <p class="muted">Mapped to the sign's red/green/yellow palette right here in your browser - nothing is sent until you hit Preview or Send. Use <em>Dither</em> for photos and gradients, <em>Solid</em> for text and logos (dithering shreds high-contrast edges into speckle). Images that already fit the 135&times;16 display are used at their exact size, so a 16&times;16 icon stays an icon; only larger artwork is scaled down. <strong>An image is a file, not a message</strong> - saving it stores the picture, and it appears on the display when a message calls it, so insert it into the message above.</p>
     <div class="row">
       <div>
         <label for="image-file">Choose file</label>
@@ -182,12 +201,8 @@
           <option value="solid">Solid (text &amp; logos)</option>
         </select>
       </div>
-      <div>
-        <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.9rem;color:#e8e8e8;margin-top:1.2rem;">
-          <input type="checkbox" id="image-keep-text" checked style="width:auto;"> Keep existing text labels
-        </label>
-      </div>
     </div>
+    <p class="muted" id="image-source-size" style="margin:0 0 0.4rem;"></p>
     <canvas id="image-preview-canvas" style="border:1px solid #3a3f4b;border-radius:6px;background:#000;image-rendering:pixelated;display:block;"></canvas>
     <div id="image-chip-fraction" class="muted" style="margin-top:0.5rem;"></div>
     <div class="actions">
@@ -196,11 +211,33 @@
       <button type="button" id="image-force-btn" class="danger" hidden>Send anyway (override LED safety check)</button>
     </div>
     <div class="error-msg" id="image-error"></div>
+    <div class="chip-ok" id="image-hint"></div>
     <pre class="bytes" id="image-bytes-preview" hidden></pre>
   </div>
 
   <div class="card">
-    <label style="margin-bottom:0.5rem;">Active labels (this session)</label>
+    <label style="margin-bottom:0.5rem;">Strings</label>
+    <p class="muted">Reusable text a message can call inline. Rewriting a string swaps its contents in without blanking the display or disturbing the message around it - which makes it the right place for anything that changes often.</p>
+    <div class="row">
+      <div>
+        <label for="string-label">Label</label>
+        <select id="string-label"></select>
+      </div>
+      <div style="flex:1;">
+        <label for="string-text">Text</label>
+        <input type="text" id="string-text" style="width:100%;" placeholder="e.g. a value you'll update often">
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" id="string-preview-btn">Preview</button>
+      <button type="button" id="string-send-btn" class="primary">Save string</button>
+    </div>
+    <div class="error-msg" id="string-error"></div>
+    <pre class="bytes" id="string-bytes-preview" hidden></pre>
+  </div>
+
+  <div class="card">
+    <label style="margin-bottom:0.5rem;">Files on the sign (this session)</label>
     <ul class="labels" id="labels-list"></ul>
     <p class="muted" id="labels-empty">Nothing sent yet.</p>
   </div>

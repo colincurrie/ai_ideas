@@ -24,6 +24,16 @@ module AlphaSign
       self
     end
 
+    # +size+ is the number of bytes to reserve for this string file's
+    # content. The trailing "0000" and the always-Locked flag aren't
+    # choices - that's the documented entry shape for strings (XDF manual,
+    # Appendix E: "<File Label>BL<Size in hex>0000", with the worked
+    # example ABL04000000BBL04000000CBL04000000 for three 1K strings).
+    def string_file(label, size:)
+      @entries << "#{label}BL#{format('%04X', size)}0000"
+      self
+    end
+
     # +height+/+width+ must match what will later be written via DotsFile
     # for this label.
     def dots_file(label, height:, width:, locked: false, monochrome: false)

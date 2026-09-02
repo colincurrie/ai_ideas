@@ -36,10 +36,20 @@ function escapeHtml(s) {
   return div.innerHTML;
 }
 
-function showBytes(id, hex) {
+// Renders a write response's packets. A reconfiguration is worth calling
+// out: it's the one operation that blanks the display and re-sends every
+// file, so it shouldn't happen silently.
+function showBytes(id, body) {
   const pre = document.getElementById(id);
   pre.hidden = false;
-  pre.textContent = hex;
+  const lines = [];
+  if (body && body.reconfigured) {
+    lines.push("memory reconfigured (display blanks briefly; all files re-sent)");
+    if (body.memory_config_bytes_hex) lines.push(`memory config: ${body.memory_config_bytes_hex}`);
+  }
+  const packets = Array.isArray(body?.bytes_hex) ? body.bytes_hex : [body?.bytes_hex].filter(Boolean);
+  packets.forEach((hex, i) => lines.push(packets.length > 1 ? `packet ${i + 1}: ${hex}` : hex));
+  pre.textContent = lines.join("\n") || "(no packets)";
 }
 
 function flashError(msg) {
@@ -80,6 +90,18 @@ async function loadOptions() {
     imageLabelSelect.appendChild(opt);
   });
   imageLabelSelect.value = "P";
+
+  // String labels are conventionally digits, keeping them clear of the
+  // letters used for text and picture files - nothing in the protocol
+  // requires it, it just makes a layout easier to read.
+  const stringLabelSelect = document.getElementById("string-label");
+  stringLabelSelect.innerHTML = "";
+  "123456789".split("").forEach((digit) => {
+    const opt = document.createElement("option");
+    opt.value = digit;
+    opt.textContent = digit;
+    stringLabelSelect.appendChild(opt);
+  });
 }
 
 async function refreshStatus() {
@@ -111,53 +133,93 @@ async function refreshStatus() {
   }
 }
 
+// Renders every file the sign is holding, across all three types, and
+// keeps the "insert into message" dropdowns in sync with what actually
+// exists to be referenced.
 async function refreshMessages() {
-  const { body } = await fetchJSON("/api/messages");
+  const { body } = await fetchJSON("/api/files");
   const list = document.getElementById("labels-list");
   const empty = document.getElementById("labels-empty");
-  const messages = body.messages || {};
-  const labels = Object.keys(messages).sort();
+  const text = body.text || {};
+  const strings = body.strings || {};
+  const dots = body.dots || {};
 
+  state.files = body;
   list.innerHTML = "";
-  empty.hidden = labels.length > 0;
+  const total = Object.keys(text).length + Object.keys(strings).length + Object.keys(dots).length;
+  empty.hidden = total > 0;
 
-  labels.forEach((label) => {
-    const msg = messages[label];
-    const isImage = msg.type === "image";
-    const preview = isImage ? `\u{1F5BC} image, ${msg.width}×${msg.height}` : (msg.runs || []).map((r) => r.text).join("");
-
+  const row = (label, kind, preview, onEdit) => {
     const li = document.createElement("li");
 
     const contentSpan = document.createElement("span");
     contentSpan.className = "content";
     const tag = document.createElement("span");
     tag.className = "label-tag";
-    tag.textContent = label;
+    tag.textContent = `${kind} ${label}`;
     contentSpan.appendChild(tag);
     contentSpan.appendChild(document.createTextNode(preview));
     li.appendChild(contentSpan);
 
     const btns = document.createElement("span");
     btns.className = "btns";
-
-    if (!isImage) {
+    if (onEdit) {
       const editBtn = document.createElement("button");
       editBtn.type = "button";
       editBtn.textContent = "Edit";
-      editBtn.addEventListener("click", () => loadMessageIntoEditor(label, msg));
+      editBtn.addEventListener("click", onEdit);
       btns.appendChild(editBtn);
     }
-
     const clearBtn = document.createElement("button");
     clearBtn.type = "button";
     clearBtn.className = "danger";
     clearBtn.textContent = "Clear";
-    clearBtn.addEventListener("click", () => clearLabel(label));
+    clearBtn.addEventListener("click", () => clearFile(kind, label));
     btns.appendChild(clearBtn);
 
     li.appendChild(btns);
     list.appendChild(li);
+  };
+
+  Object.keys(text).sort().forEach((label) => {
+    const msg = text[label];
+    const preview = (msg.runs || [])
+      .map((r) => (r.type ? `[${r.type} ${r.label}]` : r.text))
+      .join("");
+    row(label, "text", preview, () => loadMessageIntoEditor(label, msg));
   });
+  Object.keys(strings).sort().forEach((label) => {
+    row(label, "string", strings[label].text, () => {
+      document.getElementById("string-label").value = label;
+      document.getElementById("string-text").value = strings[label].text;
+    });
+  });
+  Object.keys(dots).sort().forEach((label) => {
+    row(label, "image", `${dots[label].width}×${dots[label].height}`, null);
+  });
+
+  populateReferenceSelect("insert-image-select", Object.keys(dots).sort());
+  populateReferenceSelect("insert-string-select", Object.keys(strings).sort());
+}
+
+function populateReferenceSelect(id, labels) {
+  const select = document.getElementById(id);
+  const previous = select.value;
+  select.innerHTML = "";
+  if (labels.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "(none yet)";
+    select.appendChild(opt);
+    return;
+  }
+  labels.forEach((label) => {
+    const opt = document.createElement("option");
+    opt.value = label;
+    opt.textContent = label;
+    select.appendChild(opt);
+  });
+  if (labels.includes(previous)) select.value = previous;
 }
 
 function loadMessageIntoEditor(label, msg) {
@@ -170,7 +232,15 @@ function loadMessageIntoEditor(label, msg) {
   const editor = document.getElementById("editor");
   editor.innerHTML = "";
   (msg.runs || []).forEach((run) => {
-    if (run.color || run.font) {
+    if (run.type) {
+      const chip = document.createElement("span");
+      chip.className = "ref-chip";
+      chip.dataset.refType = run.type;
+      chip.dataset.refLabel = run.label;
+      chip.contentEditable = "false";
+      chip.textContent = run.type === "image" ? `\u{1F5BC} ${run.label}` : `\u{1F524} ${run.label}`;
+      editor.appendChild(chip);
+    } else if (run.color || run.font) {
       const span = document.createElement("span");
       if (run.color) {
         span.dataset.color = run.color;
@@ -227,19 +297,31 @@ document.getElementById("clear-format").addEventListener("click", () => {
   sel.removeAllRanges();
 });
 
-// Walks the editor's DOM, turning nested <span data-color data-font> runs
-// into the flat {text, color, font} list the API expects. A span's
-// formatting applies to its whole subtree unless overridden by a nested
-// span, matching how the wire protocol's control codes persist until
-// changed.
+// Walks the editor's DOM, turning it into the flat run list the API
+// expects. Styled <span data-color data-font> subtrees become {text,
+// color, font} runs - a span's formatting applies to its whole subtree
+// unless a nested span overrides it, matching how the wire protocol's
+// control codes persist until changed. Reference chips
+// (<span data-ref-type data-ref-label>) become {type, label} runs, which
+// encode as a call to another file rather than as literal text.
 function serializeEditor() {
   const runs = [];
   function walk(node, color, font) {
     if (node.nodeType === Node.TEXT_NODE) {
-      if (node.textContent.length) runs.push({ text: node.textContent, color, font });
+      // contenteditable inserts non-breaking spaces to stop runs of
+      // spaces collapsing; the sign has no glyph for one, so send the
+      // plain space that was actually meant.
+      const text = node.textContent.replace(/\u00a0/g, " ");
+      if (text.length) runs.push({ text, color, font });
       return;
     }
     if (node.nodeType !== Node.ELEMENT_NODE) return;
+
+    if (node.dataset && node.dataset.refType) {
+      runs.push({ type: node.dataset.refType, label: node.dataset.refLabel });
+      return; // the chip's visible caption is decoration, not message text
+    }
+
     const c = (node.dataset && node.dataset.color) || color;
     const f = (node.dataset && node.dataset.font) || font;
     node.childNodes.forEach((child) => walk(child, c, f));
@@ -247,6 +329,53 @@ function serializeEditor() {
   document.getElementById("editor").childNodes.forEach((n) => walk(n, null, null));
   return runs;
 }
+
+// --- Inserting references to other files ---
+
+function insertReferenceChip(refType, label) {
+  const editor = document.getElementById("editor");
+  const chip = document.createElement("span");
+  chip.className = "ref-chip";
+  chip.dataset.refType = refType;
+  chip.dataset.refLabel = label;
+  chip.contentEditable = "false";
+  chip.textContent = refType === "image" ? `\u{1F5BC} ${label}` : `\u{1F524} ${label}`;
+  chip.title = `Calls ${refType} file ${label} at this point in the message`;
+
+  const sel = window.getSelection();
+  if (sel.rangeCount && editor.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+    const range = sel.getRangeAt(0);
+    range.deleteContents();
+    range.insertNode(chip);
+    range.setStartAfter(chip);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } else {
+    editor.appendChild(chip); // nothing focused - just append
+  }
+  editor.focus();
+}
+
+document.getElementById("insert-image-btn").addEventListener("click", () => {
+  const label = document.getElementById("insert-image-select").value;
+  if (!label) {
+    flashError("Upload an image first - then you can insert it into a message.");
+    return;
+  }
+  clearError();
+  insertReferenceChip("image", label);
+});
+
+document.getElementById("insert-string-btn").addEventListener("click", () => {
+  const label = document.getElementById("insert-string-select").value;
+  if (!label) {
+    flashError("Save a string first - then you can insert it into a message.");
+    return;
+  }
+  clearError();
+  insertReferenceChip("string", label);
+});
 
 // --- Compose actions ---
 
@@ -275,28 +404,60 @@ async function sendMessage(dryRun) {
     flashError(body.error || "Request failed");
     return;
   }
-  showBytes("bytes-preview", body.bytes_hex);
+  showBytes("bytes-preview", body);
   if (!dryRun) {
     await refreshMessages();
     await refreshStatus();
   }
 }
 
-async function clearLabel(label) {
+const CLEAR_PATHS = { text: "/api/messages", string: "/api/strings", image: "/api/image" };
+
+async function clearFile(kind, label) {
   clearError();
-  const { ok, body } = await fetchJSON(`/api/messages/${encodeURIComponent(label)}`, { method: "DELETE" });
+  const base = CLEAR_PATHS[kind] || CLEAR_PATHS.text;
+  const { ok, body } = await fetchJSON(`${base}/${encodeURIComponent(label)}`, { method: "DELETE" });
   if (!ok) {
     flashError(body.error || "Request failed");
     return;
   }
-  showBytes("bytes-preview", body.bytes_hex);
+  showBytes("bytes-preview", body);
   await refreshMessages();
   await refreshStatus();
 }
 
 document.getElementById("preview-btn").addEventListener("click", () => sendMessage(true));
 document.getElementById("send-btn").addEventListener("click", () => sendMessage(false));
-document.getElementById("clear-btn").addEventListener("click", () => clearLabel(document.getElementById("label").value));
+document.getElementById("clear-btn").addEventListener("click", () => clearFile("text", document.getElementById("label").value));
+
+// --- Strings ---
+
+async function sendString(dryRun) {
+  const errorEl = document.getElementById("string-error");
+  errorEl.textContent = "";
+  const payload = {
+    label: document.getElementById("string-label").value,
+    text: document.getElementById("string-text").value,
+    dry_run: dryRun
+  };
+  const { ok, body } = await fetchJSON("/api/strings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!ok) {
+    errorEl.textContent = body.error || "Request failed";
+    return;
+  }
+  showBytes("string-bytes-preview", body);
+  if (!dryRun) {
+    await refreshMessages();
+    await refreshStatus();
+  }
+}
+
+document.getElementById("string-preview-btn").addEventListener("click", () => sendString(true));
+document.getElementById("string-send-btn").addEventListener("click", () => sendString(false));
 
 // --- Advanced: raw command ---
 
@@ -408,6 +569,27 @@ function clampInt(value, min, max) {
   return Math.min(max, Math.max(min, n));
 }
 
+// The Aurora 63's matrix. Images at or below this size are used as-is;
+// only larger ones get scaled down (the protocol itself allows up to
+// 255x32, which is why the input fields go higher).
+const SIGN_WIDTH = 135;
+const SIGN_HEIGHT = 16;
+
+// What size to default the width/height fields to for a freshly loaded
+// image. Anything that already fits the display keeps its exact pixel
+// dimensions - a 16x16 icon stays a 16x16 icon rather than being blown up
+// to fill the panel, which would only invent detail that isn't there.
+function naturalTargetSize(img) {
+  if (img.width <= SIGN_WIDTH && img.height <= SIGN_HEIGHT) {
+    return { width: img.width, height: img.height };
+  }
+  const scale = Math.min(SIGN_WIDTH / img.width, SIGN_HEIGHT / img.height);
+  return {
+    width: Math.max(1, Math.round(img.width * scale)),
+    height: Math.max(1, Math.round(img.height * scale))
+  };
+}
+
 function processImage() {
   if (!loadedImage) return;
 
@@ -421,12 +603,15 @@ function processImage() {
   ctx.fillStyle = "black";
   ctx.fillRect(0, 0, targetW, targetH);
 
-  // Fit within the target box, preserving aspect ratio, centered - rather
-  // than stretching/distorting the source image to an arbitrary size.
-  const scale = Math.min(targetW / loadedImage.width, targetH / loadedImage.height);
+  // Fit within the target box preserving aspect ratio, centered - and
+  // never scale *up*: enlarging a small source can't add detail, it just
+  // smears whole LEDs across what were crisp pixel edges. An icon smaller
+  // than the target box is placed at its true size instead.
+  const scale = Math.min(targetW / loadedImage.width, targetH / loadedImage.height, 1);
   const drawW = loadedImage.width * scale;
   const drawH = loadedImage.height * scale;
-  ctx.drawImage(loadedImage, (targetW - drawW) / 2, (targetH - drawH) / 2, drawW, drawH);
+  ctx.imageSmoothingEnabled = scale < 1; // resampling only matters when shrinking
+  ctx.drawImage(loadedImage, Math.round((targetW - drawW) / 2), Math.round((targetH - drawH) / 2), drawW, drawH);
 
   const imageData = ctx.getImageData(0, 0, targetW, targetH);
   const dither = document.getElementById("image-dither").value === "dither";
@@ -475,6 +660,14 @@ document.getElementById("image-file").addEventListener("change", (event) => {
     const img = new Image();
     img.onload = () => {
       loadedImage = img;
+      // Size the target box to the image rather than the other way round,
+      // so icons keep their exact dimensions and only oversized artwork is
+      // scaled down. Both fields stay editable if you want something else.
+      const natural = naturalTargetSize(img);
+      document.getElementById("image-width").value = natural.width;
+      document.getElementById("image-height").value = natural.height;
+      document.getElementById("image-source-size").textContent =
+        `Source ${img.width}×${img.height}px${natural.width === img.width && natural.height === img.height ? " - used at full size" : ` - scaled down to fit ${SIGN_WIDTH}×${SIGN_HEIGHT}`}`;
       processImage();
     };
     img.src = reader.result;
@@ -499,7 +692,6 @@ async function sendImage(dryRun, force) {
     width: state.imageGrid.width,
     height: state.imageGrid.height,
     pixels: state.imageGrid.pixels,
-    keep_text_labels: document.getElementById("image-keep-text").checked,
     dry_run: dryRun,
     force: !!force
   };
@@ -517,14 +709,17 @@ async function sendImage(dryRun, force) {
     return;
   }
   forceBtn.hidden = true;
-
-  const pre = document.getElementById("image-bytes-preview");
-  pre.hidden = false;
-  pre.textContent = `memory config: ${body.memory_config_bytes_hex}\ndots data:    ${body.dots_bytes_hex}`;
+  showBytes("image-bytes-preview", body);
 
   if (!dryRun) {
     await refreshMessages();
     await refreshStatus();
+    // The picture is only stored, not shown - it appears when a message
+    // calls it, so point at the next step rather than leaving the user
+    // wondering why the sign didn't change.
+    errorEl.textContent = "";
+    document.getElementById("image-hint").textContent =
+      `Saved as image ${payload.label}. Insert it into a message above to display it.`;
   }
 }
 

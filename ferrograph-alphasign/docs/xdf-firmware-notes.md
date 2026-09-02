@@ -146,6 +146,67 @@ problem. This is really an argument *for* adding checksums eventually
 (so corrupted sends are caught before they reach the sign at all, rather
 than relying on this fallback behavior), not a reason to avoid them.
 
+## The three file types (and why a picture on its own shows nothing)
+
+The sign's filesystem holds three kinds of file, and only one of them is
+ever *displayed*:
+
+| Type | Command | Displayed? |
+|---|---|---|
+| **Text** | `A` (Write Text) | Yes - text files are the run sequence the sign cycles through |
+| **String** | `G` (Write String) | Only when a text file calls it |
+| **Dots picture** | `I` (Write Small Dots Picture) | Only when a text file calls it |
+
+Writing a string or a picture just puts it in memory. It appears on the
+display solely because a text file's content *calls* it at a particular
+point:
+
+```
+0x10 <label>   call a String file here
+0x14 <label>   call a Dots Picture file here
+```
+
+Both are inline control codes inside a text file's message text, which is
+how a picture ends up mid-sentence rather than replacing the message.
+(`AlphaSign::Protocol::CALL_STRING` / `CALL_DOTS`; AlphaNET's own editor
+has the same pair of "insert" actions, for the same reason.)
+
+This caused a real bug in an early version of this project: sending an
+image wrote the picture file and nothing else, so the sign had nothing in
+its run sequence to show and simply went dark.
+
+### String files
+
+Strings exist for cheap updates. They're **always double buffered**, so
+rewriting one swaps its contents in without blanking the display or
+disturbing the message calling it - unlike a text file rewrite (which
+blanks by default, in Full Blank/single-buffered mode) or a memory
+reconfiguration (which erases every file). That makes them the right home
+for a value that changes often inside a message that stays put.
+
+Two constraints from the manual:
+
+- A String file **cannot call another String file**.
+- Alpha's 125-byte string limit doesn't apply on XDF - its dynamic double
+  buffering lifts it to roughly 10K per memory page - but a string still
+  has to fit the size reserved for it in the memory configuration.
+
+The memory configuration entry for a string is:
+
+```
+String file: <label><"B"><lock: "L"/"U"><size, 4 hex digits><"0000">
+```
+
+(The manual's own worked example for three 1K strings A, B and C is
+`ABL04000000BBL04000000CBL04000000`, which `AlphaSign::MemoryConfig#string_file`
+reproduces byte for byte.)
+
+### Labels are one shared namespace
+
+A memory configuration lists each label once, with a type, so a label
+can't be both a text file and a picture - `SerialApi::Layout` refuses that
+rather than emitting two contradictory entries for the same label.
+
 ## Text files and multi-run formatting
 
 A `WRITE_TEXT` packet's payload is:
@@ -280,6 +341,12 @@ being defined** - any label not included in the new configuration stops
 existing. See "Flexible Paged Memory Filesystem" above for why (each
 memory page is its own self-contained filesystem that gets wholesale
 replaced on reconfiguration).
+
+Because of that, `serial_api` sends one as rarely as it can: never for
+text-only use (XDF's power-on default layout already provides a text file
+per label), and when it must, it immediately re-sends every file's
+contents, since they were just erased. See `serial_api/layout.rb` and the
+README's "Memory configuration" section.
 
 Each file gets one fixed-width entry, concatenated back to back with no
 separator (entries are self-describing by their own field widths, so the

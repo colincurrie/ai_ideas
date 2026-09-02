@@ -134,6 +134,35 @@ module WebApp
       assert_equal "P", call[2][:label]
     end
 
+    def test_api_files_proxies_to_serial_client
+      login!
+      get "/api/files"
+      assert_equal [[:get, "/files"]], @fake_client.calls
+    end
+
+    def test_api_strings_post_forwards_parsed_body
+      login!
+      post "/api/strings", { label: "1", text: "HELLO" }.to_json,
+           "CONTENT_TYPE" => "application/json"
+      assert_equal 200, last_response.status
+      call = @fake_client.calls.first
+      assert_equal [:post, "/strings"], call[0, 2]
+      assert_equal "HELLO", call[2][:text]
+    end
+
+    def test_api_delete_string_validates_label
+      login!
+      delete "/api/strings/!!"
+      assert_equal 400, last_response.status
+      assert_empty @fake_client.calls
+    end
+
+    def test_api_delete_image_forwards_dry_run_query
+      login!
+      delete "/api/image/P?dry_run=true"
+      assert_equal [[:delete, "/image/P?dry_run=true"]], @fake_client.calls
+    end
+
     def test_boot_fails_clearly_on_a_malformed_password_hash
       # Regression test: bin/hash_password used to leak its "Password to
       # hash: " prompt into stdout, so `WEB_APP_PASSWORD_HASH=$(bin/hash_password)`

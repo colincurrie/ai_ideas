@@ -140,6 +140,22 @@ module WebApp
       proxy(:get, "/messages")
     end
 
+    get "/api/files" do
+      proxy(:get, "/files")
+    end
+
+    post "/api/strings" do
+      proxy(:post, "/strings", parsed_body)
+    end
+
+    delete "/api/strings/:label" do
+      proxy(:delete, "/strings/#{valid_label!(params[:label])}#{dry_run_query}")
+    end
+
+    delete "/api/image/:label" do
+      proxy(:delete, "/image/#{valid_label!(params[:label])}#{dry_run_query}")
+    end
+
     post "/api/messages" do
       proxy(:post, "/messages", parsed_body)
     end

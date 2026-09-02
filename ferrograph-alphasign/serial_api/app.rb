@@ -11,12 +11,22 @@ require "json"
 
 require_relative "../lib/alpha_sign"
 require_relative "config"
+require_relative "layout"
 
 module SerialApi
   # The device driver service: owns the serial port and exposes the Alpha
   # protocol as JSON HTTP. No authentication - meant to be reachable only
   # from 127.0.0.1 (see web_app/, which is the authenticated front door).
+  #
+  # File model (see docs/xdf-firmware-notes.md): TEXT files are what the
+  # sign actually displays. STRING and DOTS PICTURE files are only ever
+  # shown because a TEXT file calls them inline. Writing a string or a
+  # picture on its own displays nothing - the call has to be in a message.
   class App < Sinatra::Base
+    # The sign blanks and reorganises memory while processing a Memory
+    # Configuration; give it a moment before the content writes land.
+    RECONFIGURE_PAUSE = 1
+
     configure do
       set :show_exceptions, false
       set :raise_errors, false
@@ -33,7 +43,7 @@ module SerialApi
       )
       set :conn_mutex, Mutex.new
       set :last_error, nil
-      set :sent_messages, {}
+      set :layout, Layout.new
     end
 
     before do
@@ -54,45 +64,12 @@ module SerialApi
         [true, "true", "1", 1].include?(value)
       end
 
-      # Sends +packet+ over the serial port (guarded by a mutex, since the
-      # sign only has one port), or just reports the bytes if +dry_run+.
-      # +label+, when given, records this as the last-sent content for that
-      # label so GET /messages can report it.
-      def send_or_report(packet, dry_run:, label: nil, meta: {})
-        if dry_run
-          return { ok: true, dry_run: true, bytes_hex: packet.to_hex }
-        end
-
-        settings.conn_mutex.synchronize do
-          settings.connection.write(packet)
-        end
-        settings.last_error = nil
-
-        if label
-          settings.sent_messages[label] = meta.merge(sent_at: Time.now.utc.iso8601)
-        end
-
-        { ok: true, bytes_hex: packet.to_hex, label: label }
-      rescue StandardError, LoadError => e
-        # LoadError isn't a StandardError, but SerialConnection#open
-        # deliberately raises it when the 'serialport' gem isn't
-        # installed (e.g. this machine has no hardware attached yet) -
-        # that should surface as a normal API error, not a 500.
-        settings.last_error = e.message
-        halt 502, { ok: false, error: e.message }.to_json
+      def packet_type
+        @packet_type ||= Config.type
       end
 
-      def build_text_file(body, default_position: "fill", default_mode: "automode", label_override: nil, priority_override: nil)
-        speed_prefix = body[:speed] ? AlphaSign::Speeds.lookup(body[:speed]) : ""
-        text = speed_prefix + AlphaSign::Runs.encode(body[:runs] || [])
-
-        AlphaSign::TextFile.new(
-          text,
-          label: label_override || body[:label] || "A",
-          position: AlphaSign::Positions.lookup(body[:position] || default_position),
-          mode: AlphaSign::Modes.lookup(body[:mode] || default_mode),
-          priority: priority_override.nil? ? truthy?(body[:priority]) : priority_override
-        )
+      def packet_address
+        @packet_address ||= Config.address
       end
 
       def required_positive_int(body, key)
@@ -106,12 +83,71 @@ module SerialApi
         halt 400, { ok: false, error: "#{key} must be an integer" }.to_json
       end
 
-      # Best-effort size estimate for a previously-sent text label being
-      # carried forward into a new Memory Configuration - there's no
-      # tracked "defined size" for it (only the content last sent), so
-      # this pads generously rather than trying to be exact.
-      def estimate_text_size(meta)
-        AlphaSign::Runs.encode(meta[:runs] || []).bytesize + 64
+      def valid_label!(label)
+        label = label.to_s
+        halt 400, { ok: false, error: "label must be a single character, got #{label.inspect}" }.to_json unless label.length == 1
+        label
+      end
+
+      # Writes the change that just went into the layout.
+      #
+      # If the layout still matches what the sign was last configured for,
+      # only +packets+ (the thing that actually changed) is sent. If it
+      # doesn't, a Memory Configuration goes first - which erases every
+      # file - followed by a full re-send of all file contents, since
+      # anything not re-sent would simply be gone.
+      def write_layout_change(packets, dry_run:, extra: {})
+        reconfiguring = settings.layout.needs_reconfiguration?
+        config = reconfiguring ? settings.layout.memory_config : nil
+
+        if reconfiguring
+          packets = settings.layout.content_packets(type: packet_type, address: packet_address)
+        end
+
+        response = {
+          ok: true,
+          reconfigured: reconfiguring,
+          memory_config_bytes_hex: config&.to_packet(type: packet_type, address: packet_address)&.to_hex,
+          bytes_hex: packets.map(&:to_hex)
+        }.merge(extra)
+
+        if dry_run
+          return response.merge(dry_run: true).to_json
+        end
+
+        begin
+          settings.conn_mutex.synchronize do
+            if config
+              settings.connection.write(config.to_packet(type: packet_type, address: packet_address))
+              sleep RECONFIGURE_PAUSE
+            end
+            packets.each { |packet| settings.connection.write(packet) }
+          end
+        rescue StandardError, LoadError => e
+          # LoadError isn't a StandardError, but SerialConnection#open
+          # deliberately raises it when the 'serialport' gem isn't
+          # installed - that should surface as a normal API error, not a
+          # 500.
+          settings.last_error = e.message
+          halt 502, { ok: false, error: e.message }.to_json
+        end
+
+        settings.last_error = nil
+        settings.layout.mark_configured! if reconfiguring
+        response.to_json
+      end
+
+      # For the packets that sit outside the file system entirely (the
+      # Priority Text File, the raw escape hatch) - no layout involved.
+      def send_standalone(packet, dry_run:)
+        return { ok: true, dry_run: true, bytes_hex: packet.to_hex }.to_json if dry_run
+
+        settings.conn_mutex.synchronize { settings.connection.write(packet) }
+        settings.last_error = nil
+        { ok: true, bytes_hex: packet.to_hex }.to_json
+      rescue StandardError, LoadError => e
+        settings.last_error = e.message
+        halt 502, { ok: false, error: e.message }.to_json
       end
     end
 
@@ -140,43 +176,134 @@ module SerialApi
       }.to_json
     end
 
+    # Everything the sign is currently holding, by file type.
+    get "/files" do
+      settings.layout.to_h.to_json
+    end
+
+    # Text files - the only files the sign displays directly.
     get "/messages" do
-      { messages: settings.sent_messages }.to_json
+      { messages: settings.layout.to_h[:text] }.to_json
     end
 
     post "/messages" do
       body = json_body
-      label = (body[:label] || "A").to_s
-      text_file = build_text_file(body, label_override: label)
-      packet = text_file.to_packet(type: body[:type] || Config.type, address: body[:address] || Config.address)
-      result = send_or_report(packet, dry_run: truthy?(body[:dry_run]), label: label, meta: body.merge(label: label))
-      result.to_json
+      label = valid_label!(body[:label] || "A")
+
+      if truthy?(body[:priority])
+        # The Priority Text File lives outside the file system - it has its
+        # own fixed buffer, so it never takes part in memory configuration.
+        speed_prefix = body[:speed] ? AlphaSign::Speeds.lookup(body[:speed]) : ""
+        text_file = AlphaSign::TextFile.new(
+          speed_prefix + AlphaSign::Runs.encode(body[:runs] || []),
+          position: AlphaSign::Positions.lookup(body[:position] || "middle"),
+          mode: AlphaSign::Modes.lookup(body[:mode] || "hold"),
+          priority: true
+        )
+        return send_standalone(text_file.to_packet(type: packet_type, address: packet_address),
+                               dry_run: truthy?(body[:dry_run]))
+      end
+
+      settings.layout.put_text(label, runs: body[:runs] || [], position: body[:position],
+                                       mode: body[:mode], speed: body[:speed])
+      packet = settings.layout.text_packet(label, type: packet_type, address: packet_address)
+      write_layout_change([packet], dry_run: truthy?(body[:dry_run]), extra: { label: label })
     end
 
     delete "/messages/:label" do
+      label = valid_label!(params[:label])
       dry_run = truthy?(params[:dry_run])
-      text_file = AlphaSign::TextFile.new("", label: params[:label])
-      packet = text_file.to_packet(type: Config.type, address: Config.address)
-      result = send_or_report(packet, dry_run: dry_run, label: params[:label])
-      settings.sent_messages.delete(params[:label]) unless dry_run
-      result.to_json
+      settings.layout.delete(:text, label) unless dry_run
+      packet = AlphaSign::TextFile.new("", label: label).to_packet(type: packet_type, address: packet_address)
+      write_layout_change([packet], dry_run: dry_run, extra: { label: label })
     end
 
+    # String files - reusable text a message can call inline. Rewriting one
+    # is the cheap way to change part of a message: strings are double
+    # buffered, so the update swaps in without blanking the display.
+    post "/strings" do
+      body = json_body
+      label = valid_label!(body[:label] || "1")
+      settings.layout.put_string(label, text: body[:text].to_s)
+      packet = settings.layout.string_packet(label, type: packet_type, address: packet_address)
+      write_layout_change([packet], dry_run: truthy?(body[:dry_run]), extra: { label: label })
+    end
+
+    delete "/strings/:label" do
+      label = valid_label!(params[:label])
+      dry_run = truthy?(params[:dry_run])
+      settings.layout.delete(:string, label) unless dry_run
+      packet = AlphaSign::StringFile.new("", label: label).to_packet(type: packet_type, address: packet_address)
+      write_layout_change([packet], dry_run: dry_run, extra: { label: label })
+    end
+
+    # Dots Picture files. Note this only stores the picture - it appears on
+    # the display when a message calls it (a {type: "image"} run).
+    post "/image" do
+      body = json_body
+      label = valid_label!(body[:label] || "P")
+      width = required_positive_int(body, :width)
+      height = required_positive_int(body, :height)
+      pixels = body[:pixels].to_s
+      expected_length = width * height
+      if pixels.length != expected_length
+        halt 400, { ok: false, error: "pixels must be exactly width*height characters (#{expected_length}), got #{pixels.length}" }.to_json
+      end
+
+      settings.layout.put_dots(label, width: width, height: height, pixels: pixels,
+                                      monochrome: truthy?(body[:monochrome]))
+      dots = settings.layout.dots_file(label)
+      chip_fraction = dots.lit_chip_fraction
+
+      if chip_fraction > 0.5 && !truthy?(body[:force])
+        settings.layout.delete(:dots, label)
+        halt 422, {
+          ok: false,
+          error: format(
+            "this image would light about %<pct>d%% of LED chips at once - XDF's manual warns against " \
+            "sustaining more than 50%% to avoid thermal damage. Reduce brightness/coverage, or pass " \
+            "force:true to send anyway.", pct: (chip_fraction * 100).round
+          ),
+          lit_chip_fraction: chip_fraction
+        }.to_json
+      end
+
+      settings.layout.delete(:dots, label) if truthy?(body[:dry_run])
+      packet = dots.to_packet(type: packet_type, address: packet_address)
+      write_layout_change([packet], dry_run: truthy?(body[:dry_run]),
+                                    extra: { label: label, lit_fraction: dots.lit_fraction,
+                                             lit_chip_fraction: chip_fraction })
+    end
+
+    delete "/image/:label" do
+      label = valid_label!(params[:label])
+      dry_run = truthy?(params[:dry_run])
+      settings.layout.delete(:dots, label) unless dry_run
+      # Nothing to write for the file itself - it stops existing at the
+      # next reconfiguration - so this is a layout-only change.
+      write_layout_change([], dry_run: dry_run, extra: { label: label })
+    end
+
+    # The Priority Text File overrides everything else on the display. It
+    # has its own fixed buffer outside the file system, so it never takes
+    # part in memory configuration.
     post "/priority" do
       body = json_body
-      text_file = build_text_file(body, default_position: "middle", default_mode: "hold", priority_override: true)
-      packet = text_file.to_packet(type: body[:type] || Config.type, address: body[:address] || Config.address)
-      result = send_or_report(packet, dry_run: truthy?(body[:dry_run]), label: "0", meta: body.merge(label: "0"))
-      result.to_json
+      speed_prefix = body[:speed] ? AlphaSign::Speeds.lookup(body[:speed]) : ""
+      text_file = AlphaSign::TextFile.new(
+        speed_prefix + AlphaSign::Runs.encode(body[:runs] || []),
+        position: AlphaSign::Positions.lookup(body[:position] || "middle"),
+        mode: AlphaSign::Modes.lookup(body[:mode] || "hold"),
+        priority: true
+      )
+      send_standalone(text_file.to_packet(type: packet_type, address: packet_address),
+                      dry_run: truthy?(body[:dry_run]))
     end
 
     delete "/priority" do
-      dry_run = truthy?(params[:dry_run])
       text_file = AlphaSign::TextFile.new("", priority: true)
-      packet = text_file.to_packet(type: Config.type, address: Config.address)
-      result = send_or_report(packet, dry_run: dry_run, label: "0")
-      settings.sent_messages.delete("0") unless dry_run
-      result.to_json
+      send_standalone(text_file.to_packet(type: packet_type, address: packet_address),
+                      dry_run: truthy?(params[:dry_run]))
     end
 
     post "/raw" do
@@ -189,97 +316,7 @@ module SerialApi
         type: body[:type] || Config.type,
         address: body[:address] || Config.address
       )
-      result = send_or_report(packet, dry_run: truthy?(body[:dry_run]))
-      result.to_json
-    end
-
-    # Displays an image as a Small Dots Picture. Unlike /messages, this
-    # sends TWO packets: a Memory Configuration defining the label as a
-    # Dots file (which - important - replaces the sign's ENTIRE file
-    # layout, not just this label), then the actual pixel data. See
-    # AlphaSign::DotsFile/MemoryConfig for the protocol-provenance caveat.
-    post "/image" do
-      body = json_body
-      label = (body[:label] || "P").to_s
-      width = required_positive_int(body, :width)
-      height = required_positive_int(body, :height)
-      pixels = body[:pixels].to_s
-      expected_length = width * height
-      if pixels.length != expected_length
-        halt 400, { ok: false, error: "pixels must be exactly width*height characters (#{expected_length}), got #{pixels.length}" }.to_json
-      end
-
-      rows = pixels.chars.each_slice(width).map(&:join)
-      dots = AlphaSign::DotsFile.new(rows, label: label)
-      chip_fraction = dots.lit_chip_fraction
-
-      if chip_fraction > 0.5 && !truthy?(body[:force])
-        halt 422, {
-          ok: false,
-          error: format(
-            "this image would light about %<pct>d%% of LED chips at once - XDF's manual warns against " \
-            "sustaining more than 50%% to avoid thermal damage. Reduce brightness/coverage, or pass " \
-            "force:true to send anyway.", pct: (chip_fraction * 100).round
-          ),
-          lit_chip_fraction: chip_fraction
-        }.to_json
-      end
-
-      keep_text_labels = truthy?(body.fetch(:keep_text_labels, true))
-      memory_config = AlphaSign::MemoryConfig.new
-      if keep_text_labels
-        settings.sent_messages.each do |existing_label, meta|
-          next if existing_label == label || existing_label == "0" # "0" is the Priority Text File - not a real memory-config slot
-          size = [estimate_text_size(meta), 256].max
-          memory_config.text_file(existing_label, size: size)
-        end
-      end
-      memory_config.dots_file(label, height: height, width: width, monochrome: truthy?(body[:monochrome]), locked: truthy?(body[:locked]))
-
-      type = body[:type] || Config.type
-      address = body[:address] || Config.address
-      config_packet = memory_config.to_packet(type: type, address: address)
-      dots_packet = dots.to_packet(type: type, address: address)
-
-      if truthy?(body[:dry_run])
-        halt 200, {
-          ok: true, dry_run: true,
-          memory_config_bytes_hex: config_packet.to_hex, dots_bytes_hex: dots_packet.to_hex,
-          lit_fraction: dots.lit_fraction, lit_chip_fraction: chip_fraction
-        }.to_json
-      end
-
-      begin
-        settings.conn_mutex.synchronize do
-          settings.connection.write(config_packet)
-          # XDF blanks the display and defragments/reconfigures memory on
-          # a Memory Config write - give it a moment before the picture
-          # data arrives rather than risk it queuing mid-reconfiguration.
-          sleep 1
-          settings.connection.write(dots_packet)
-        end
-      rescue StandardError, LoadError => e
-        # LoadError isn't a StandardError - see send_or_report's comment
-        # on the same rescue clause for why it's caught here too.
-        settings.last_error = e.message
-        halt 502, { ok: false, error: e.message }.to_json
-      end
-      settings.last_error = nil
-
-      # The memory config just replaced the sign's whole file layout, so
-      # our tracked state needs to match: everything except the new image
-      # is gone (or was explicitly re-included above, in which case it's
-      # still real on the sign - just re-add it to keep GET /messages
-      # accurate).
-      preserved = keep_text_labels ? settings.sent_messages.reject { |l, _| l == label || l == "0" } : {}
-      settings.sent_messages.clear
-      settings.sent_messages.merge!(preserved)
-      settings.sent_messages[label] = { type: "image", width: width, height: height, sent_at: Time.now.utc.iso8601 }
-
-      {
-        ok: true, label: label, lit_fraction: dots.lit_fraction, lit_chip_fraction: chip_fraction,
-        memory_config_bytes_hex: config_packet.to_hex, dots_bytes_hex: dots_packet.to_hex
-      }.to_json
+      send_standalone(packet, dry_run: truthy?(body[:dry_run]))
     end
   end
 end

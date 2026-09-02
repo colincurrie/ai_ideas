@@ -32,6 +32,14 @@ module AlphaSign
     # Special Function sub-codes (the byte after WRITE_SPECIAL/READ_SPECIAL)
     MEMORY_CONFIG = "$" # Define/Report Memory Configuration (0x24)
 
+    # "Call" control codes, embedded in a TEXT file's content to pull in
+    # another file at that point in the message. This is the only way a
+    # String or Dots Picture file ever reaches the display: writing one
+    # just parks its contents in memory, inert, until a TEXT file in the
+    # run sequence calls it (XDF manual, Appendix A).
+    CALL_STRING = "\x10" # 0x10 + string file label
+    CALL_DOTS   = "\x14" # 0x14 + dots picture file label
+
     # Type code: which sign(s) a packet is addressed to. "Z" (all types) with
     # address "00" (broadcast) is the standard way to talk to a single sign
     # on a point-to-point RS232 link without needing to know its address.
