@@ -137,9 +137,26 @@ async function refreshStatus() {
 // keeps the "insert into message" dropdowns in sync with what actually
 // exists to be referenced.
 async function refreshMessages() {
-  const { body } = await fetchJSON("/api/files");
+  const { ok, body } = await fetchJSON("/api/files");
   const list = document.getElementById("labels-list");
   const empty = document.getElementById("labels-empty");
+
+  // A failed call used to fall through to "everything is empty", which is
+  // indistinguishable from "nothing has been saved yet" - so a save could
+  // report success while the file list and the Insert dropdowns stayed
+  // stubbornly blank, with nothing on screen to say why. Say so instead.
+  if (!ok) {
+    list.innerHTML = "";
+    empty.hidden = false;
+    empty.className = "error-msg";
+    empty.textContent = `Couldn't read the sign's files: ${body.error || "serial-api unreachable"}. ` +
+      "Anything already saved is still on the sign - this is the list that's broken, not the sign.";
+    populateReferenceSelect("insert-image-select", [], "(file list unavailable)");
+    populateReferenceSelect("insert-string-select", [], "(file list unavailable)");
+    refreshImageInsertButton();
+    return;
+  }
+
   const text = body.text || {};
   const strings = body.strings || {};
   const dots = body.dots || {};
@@ -148,6 +165,15 @@ async function refreshMessages() {
   list.innerHTML = "";
   const total = Object.keys(text).length + Object.keys(strings).length + Object.keys(dots).length;
   empty.hidden = total > 0;
+  empty.className = "muted";
+  empty.textContent = "Nothing sent yet.";
+
+  // Before rendering the rows, not after: the dropdowns are how a saved
+  // image gets referenced at all, so a problem rendering one row must not
+  // leave them empty.
+  populateReferenceSelect("insert-image-select", Object.keys(dots).sort(), "(save an image first)");
+  populateReferenceSelect("insert-string-select", Object.keys(strings).sort(), "(save a string first)");
+  refreshImageInsertButton();
 
   const row = (label, kind, preview, onEdit) => {
     const li = document.createElement("li");
@@ -197,10 +223,6 @@ async function refreshMessages() {
   Object.keys(dots).sort().forEach((label) => {
     row(label, "image", `${dots[label].width}×${dots[label].height}`, null);
   });
-
-  populateReferenceSelect("insert-image-select", Object.keys(dots).sort(), "(save an image first)");
-  populateReferenceSelect("insert-string-select", Object.keys(strings).sort(), "(save a string first)");
-  refreshImageInsertButton();
 }
 
 function populateReferenceSelect(id, labels, emptyLabel) {
