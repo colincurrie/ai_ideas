@@ -198,18 +198,21 @@ async function refreshMessages() {
     row(label, "image", `${dots[label].width}×${dots[label].height}`, null);
   });
 
-  populateReferenceSelect("insert-image-select", Object.keys(dots).sort());
-  populateReferenceSelect("insert-string-select", Object.keys(strings).sort());
+  populateReferenceSelect("insert-image-select", Object.keys(dots).sort(), "(save an image first)");
+  populateReferenceSelect("insert-string-select", Object.keys(strings).sort(), "(save a string first)");
+  refreshImageInsertButton();
 }
 
-function populateReferenceSelect(id, labels) {
+function populateReferenceSelect(id, labels, emptyLabel) {
   const select = document.getElementById(id);
   const previous = select.value;
   select.innerHTML = "";
   if (labels.length === 0) {
     const opt = document.createElement("option");
     opt.value = "";
-    opt.textContent = "(none yet)";
+    // Only files that already exist on the sign can be referenced, so an
+    // empty list means "go and save one", not "this feature is broken".
+    opt.textContent = emptyLabel || "(none yet)";
     select.appendChild(opt);
     return;
   }
@@ -851,9 +854,35 @@ async function sendImage(dryRun, force) {
     // wondering why the sign didn't change.
     errorEl.textContent = "";
     document.getElementById("image-hint").textContent =
-      `Saved as image ${payload.label}. Insert it into a message above to display it.`;
+      `Saved as image ${payload.label} - it's on the sign but nothing displays it yet. ` +
+      `Use "Insert into message" to put it in a message.`;
   }
 }
+
+// An image only becomes referenceable once it's on the sign, so this
+// enables itself when the label in the picker is one that's been saved.
+// It exists because the two halves of the job sit in different cards:
+// without it you save a picture here and then have to go back up to the
+// compose card to find it, which reads as a chicken-and-egg (the Insert
+// image dropdown can't list an image that doesn't exist yet).
+function refreshImageInsertButton() {
+  const label = document.getElementById("image-label").value;
+  const saved = !!(state.files && state.files.dots && state.files.dots[label]);
+  const button = document.getElementById("image-insert-btn");
+  button.disabled = !saved;
+  button.title = saved ? `Add a call to image ${label} to the message above`
+                       : "Save the image to the sign first - a message can only call one that exists";
+}
+
+document.getElementById("image-label").addEventListener("change", refreshImageInsertButton);
+
+document.getElementById("image-insert-btn").addEventListener("click", () => {
+  const label = document.getElementById("image-label").value;
+  insertReferenceChip("image", label);
+  document.getElementById("editor").scrollIntoView({ block: "center", behavior: "smooth" });
+  document.getElementById("image-hint").textContent =
+    `Image ${label} added to the message. Send the message to put it on the display.`;
+});
 
 document.getElementById("image-preview-btn").addEventListener("click", () => sendImage(true));
 document.getElementById("image-send-btn").addEventListener("click", () => sendImage(false));

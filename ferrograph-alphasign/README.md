@@ -258,6 +258,13 @@ string actually appear on the display (see "The three file types" above) -
 it's a call, not a copy, so re-saving the string or picture behind it
 updates what's shown without touching the message.
 
+**The order is save, then insert.** A message can only call a file that
+already exists on the sign, so the Insert dropdowns list saved files only -
+they start out saying "(save an image first)". Saving an image is not
+blocked on anything: the Image card's **Save to sign** works on its own, and
+the **Insert into message** button next to it adds the call once it's
+saved.
+
 The **Strings** card writes reusable text a message can call. Rewriting a
 string swaps its contents in without blanking the display or disturbing the
 message around it, which makes it the right place for anything that changes

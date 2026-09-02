@@ -157,7 +157,7 @@
 
     <div class="toolbar">
       <div>
-        <label for="insert-image-select">Insert image</label>
+        <label for="insert-image-select" title="Only images already saved to the sign can be referenced">Insert image</label>
         <select id="insert-image-select"></select>
       </div>
       <button type="button" id="insert-image-btn">Insert</button>
@@ -170,7 +170,7 @@
 
     <label for="editor">Message</label>
     <div id="editor" contenteditable="true" data-placeholder="Type your message, then select text and apply a color/font&hellip;"></div>
-    <p class="muted" style="margin-top:0.4rem;">Images and strings are separate files on the sign - they only appear where a message calls them, so insert them here to display them.</p>
+    <p class="muted" style="margin-top:0.4rem;">Images and strings are separate files on the sign - they only appear where a message calls them, so insert them here to display them. The dropdowns list files already saved to the sign, so save an image or string below first and it'll appear.</p>
 
     <div class="row" style="margin-top:0.75rem;">
       <div>
@@ -205,7 +205,8 @@
 
   <div class="card">
     <label style="margin-bottom:0.5rem;">Image</label>
-    <p class="muted">Draw a picture pixel by pixel, or upload one and have it mapped to the sign's red/green/yellow palette right here in your browser - nothing is sent until you hit Preview or Send. Both write to the same grid, so you can upload then touch up by hand. <strong>An image is a file, not a message</strong> - saving it stores the picture, and it appears on the display when a message calls it, so insert it into the message above.</p>
+    <p class="muted">Draw a picture pixel by pixel, or upload one and have it mapped to the sign's red/green/yellow palette right here in your browser - nothing leaves the browser until you save. Both write to the same grid, so you can upload then touch up by hand.</p>
+    <p class="muted"><strong>Save first, then insert.</strong> An image is a file, not a message: saving stores the picture on the sign (on its own it displays nothing), and it appears when a message calls it. So save it here, then use <em>Insert into message</em> - an image has to exist on the sign before a message can reference it, which is why the Insert image dropdown up there only lists saved ones.</p>
     <div class="row">
       <div>
         <label for="image-source">Make it by</label>
@@ -276,9 +277,10 @@
     <p class="muted" id="draw-hint" hidden>Click or drag to paint. Right-click (or ctrl-click) erases; keys <kbd>1</kbd>-<kbd>4</kbd> pick a colour. Every 8th gridline is brighter, for counting across. Uploading a picture drops it onto this same grid, so you can fix by hand whatever the dither got wrong.</p>
     <div id="image-chip-fraction" class="muted" style="margin-top:0.5rem;"></div>
     <div class="actions">
-      <button type="button" id="image-preview-btn">Preview</button>
-      <button type="button" id="image-send-btn" class="primary">Send</button>
-      <button type="button" id="image-force-btn" class="danger" hidden>Send anyway (override LED safety check)</button>
+      <button type="button" id="image-preview-btn">Preview bytes</button>
+      <button type="button" id="image-send-btn" class="primary">Save to sign</button>
+      <button type="button" id="image-insert-btn" disabled title="Save the image first">Insert into message</button>
+      <button type="button" id="image-force-btn" class="danger" hidden>Save anyway (override LED safety check)</button>
     </div>
     <div class="error-msg" id="image-error"></div>
     <div class="chip-ok" id="image-hint"></div>
