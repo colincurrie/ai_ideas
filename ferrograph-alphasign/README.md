@@ -263,21 +263,33 @@ string swaps its contents in without blanking the display or disturbing the
 message around it, which makes it the right place for anything that changes
 often.
 
-The Image card maps whatever you upload to the sign's red/green/yellow
-palette entirely in your browser (HTML canvas) - `serial_api` never sees
-raw image bytes, only the final pixel grid. It shows a live preview and the
-estimated LED load percentage before you send anything, and blocks (with a
-clear "send anyway" override) if that load exceeds the sign's 50% safety
-limit.
+The Image card makes a picture two ways, and both write to the **same
+pixel grid** - so you can upload something roughly right and then fix by
+hand whatever the dither got wrong, rather than having to get it perfect
+in another tool first. Either way `serial_api` never sees raw image bytes,
+only the final grid, and the card shows the estimated LED load before you
+send anything, blocking (with a clear "send anyway" override) if it
+exceeds the sign's 50% safety limit.
 
-Images are never scaled **up**: anything that already fits the 135x16
-display is used at its exact pixel size, so a 16x16 icon stays a 16x16
-icon rather than being blown up to fill the panel (which can only invent
-detail that isn't there, smearing whole LEDs across what were crisp edges).
-Only oversized artwork is scaled down, preserving aspect ratio. Both size
-fields stay editable if you want something else.
+**Drawing it.** A paintable grid, sized up to the sign's full 135x16:
 
-Two colour-mapping modes, and the choice matters a lot:
+- Click or drag to paint; drags are joined up, so a fast stroke draws a
+  solid line rather than a dotted one.
+- Right-click (or ctrl-click) erases; keys `1`-`4` pick off/red/green/yellow.
+- Zoom from fit-width up to 24px cells - a 135-wide picture is unpaintable
+  at true scale, so the grid scrolls horizontally instead. Every 8th
+  gridline is brighter, which is the only practical way to count across.
+- Undo is per stroke, and resizing keeps what you've drawn (anchored
+  top-left) rather than throwing it away.
+
+**Uploading a file.** Mapped to the sign's red/green/yellow palette in the
+browser (HTML canvas). Images are never scaled **up**: anything that
+already fits 135x16 is used at its exact pixel size, so a 16x16 icon stays
+a 16x16 icon rather than being blown up to fill the panel (which can only
+invent detail that isn't there, smearing whole LEDs across what were crisp
+edges). Only oversized artwork is scaled down, preserving aspect ratio.
+
+Two colour-mapping modes for an upload, and the choice matters a lot:
 
 - **Dither** (Floyd-Steinberg error diffusion) - for photos and gradients,
   where mixing adjacent pixels approximates tones the sign can't display

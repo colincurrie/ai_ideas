@@ -498,8 +498,6 @@ const DOTS_MATCH_PALETTE = { off: [0, 0, 0], red: [255, 0, 0], green: [0, 255, 0
 const DOTS_ORDER = ["off", "red", "green", "yellow"]; // index == the wire's pixel digit code
 const DOTS_PREVIEW_COLORS = ["#000", "#ff5a5a", "#5aff8a", "#ffe45a"];
 
-let loadedImage = null;
-
 function nearestDotsColorIndex(r, g, b) {
   let best = 0;
   let bestDist = Infinity;
@@ -562,18 +560,279 @@ function ditherToDots(imageData, width, height, dither = true) {
   }
   return codes;
 }
-
 function clampInt(value, min, max) {
   const n = Number.parseInt(value, 10);
   if (Number.isNaN(n)) return min;
   return Math.min(max, Math.max(min, n));
 }
 
-// The Aurora 63's matrix. Images at or below this size are used as-is;
-// only larger ones get scaled down (the protocol itself allows up to
-// 255x32, which is why the input fields go higher).
+// The Aurora 63's matrix, and the hard ceiling on both the drawing grid
+// and an upload: the protocol allows a bigger picture (up to 255x32) but
+// this sign has nowhere to put one.
 const SIGN_WIDTH = 135;
 const SIGN_HEIGHT = 16;
+
+let loadedImage = null;
+
+// --- The pixel grid ---
+//
+// There is exactly one grid (state.imageGrid), and both ways of making a
+// picture write to it: uploading replaces it wholesale, the drawing editor
+// edits it in place. That's deliberate - it means you can upload something
+// roughly right and then fix the handful of pixels the dither got wrong,
+// rather than having to get it perfect outside the app first.
+
+function gridCodes() {
+  const grid = state.imageGrid;
+  if (!grid) return null;
+  const codes = new Uint8Array(grid.width * grid.height);
+  for (let i = 0; i < codes.length; i++) codes[i] = grid.pixels.charCodeAt(i) - 48;
+  return codes;
+}
+
+function setGrid(width, height, codes) {
+  state.imageGrid = { width, height, pixels: Array.from(codes).join("") };
+  renderGrid();
+  updateChipFraction(codes);
+  document.getElementById("image-force-btn").hidden = true;
+  document.getElementById("image-error").textContent = "";
+}
+
+function blankGrid(width, height) {
+  setGrid(width, height, new Uint8Array(width * height));
+}
+
+// Keeps whatever is already drawn, anchored top-left, so nudging the size
+// while working doesn't throw the picture away.
+function resizeGrid(width, height) {
+  const old = state.imageGrid;
+  const codes = new Uint8Array(width * height);
+  if (old) {
+    const oldCodes = gridCodes();
+    for (let y = 0; y < Math.min(height, old.height); y++) {
+      for (let x = 0; x < Math.min(width, old.width); x++) {
+        codes[y * width + x] = oldCodes[y * old.width + x];
+      }
+    }
+  }
+  setGrid(width, height, codes);
+}
+
+function gridSizeFromInputs() {
+  return {
+    width: clampInt(document.getElementById("image-width").value, 1, SIGN_WIDTH),
+    height: clampInt(document.getElementById("image-height").value, 1, SIGN_HEIGHT)
+  };
+}
+
+function drawing() {
+  return document.getElementById("image-source").value === "draw";
+}
+
+// --- Rendering the grid ---
+//
+// One canvas serves as both the upload preview and the drawing surface, so
+// what you paint on is exactly what gets sent. Cell size is the only
+// difference: a 135-wide picture is unpaintable at preview scale, so the
+// editor zooms it up and lets the container scroll.
+
+function cellSize(width) {
+  const zoom = document.getElementById("draw-zoom").value;
+  if (zoom !== "fit") return Number.parseInt(zoom, 10);
+  // Measured from the card, not the scroll container: the container is
+  // sized to fit its canvas, so measuring it would make "fit width" depend
+  // on the number it's trying to produce.
+  const card = document.getElementById("image-canvas-scroll").parentElement;
+  const style = getComputedStyle(card);
+  const available = card.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - 2;
+  return Math.max(2, Math.min(20, Math.floor(available / width)));
+}
+
+function renderGrid() {
+  const grid = state.imageGrid;
+  const canvas = document.getElementById("image-preview-canvas");
+  if (!grid) {
+    canvas.width = 0;
+    canvas.height = 0;
+    return;
+  }
+
+  const codes = gridCodes();
+  const size = drawing() ? cellSize(grid.width) : Math.max(2, Math.min(12, Math.floor(400 / grid.width)));
+  canvas.width = grid.width * size;
+  canvas.height = grid.height * size;
+  canvas.classList.toggle("paintable", drawing());
+
+  const ctx = canvas.getContext("2d");
+  for (let y = 0; y < grid.height; y++) {
+    for (let x = 0; x < grid.width; x++) {
+      ctx.fillStyle = DOTS_PREVIEW_COLORS[codes[y * grid.width + x]];
+      ctx.fillRect(x * size, y * size, size, size);
+    }
+  }
+
+  // Gridlines only when painting, and only when the cells are big enough
+  // for them to help rather than smother the picture. Every 8th line is
+  // brighter: counting to a pixel column on a 135-wide grid is otherwise
+  // hopeless.
+  if (!drawing() || size < 5) return;
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= grid.width; x++) {
+    ctx.strokeStyle = x % 8 === 0 ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.12)";
+    ctx.beginPath();
+    ctx.moveTo(x * size + 0.5, 0);
+    ctx.lineTo(x * size + 0.5, canvas.height);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= grid.height; y++) {
+    ctx.strokeStyle = y % 8 === 0 ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.12)";
+    ctx.beginPath();
+    ctx.moveTo(0, y * size + 0.5);
+    ctx.lineTo(canvas.width, y * size + 0.5);
+    ctx.stroke();
+  }
+}
+
+// --- Drawing ---
+
+const UNDO_LIMIT = 60;
+let painting = null; // the code being painted for the current stroke
+let lastCell = null; // where the stroke was last seen, for joining up a fast drag
+
+function pushUndo() {
+  if (!state.imageGrid) return;
+  state.drawUndo = state.drawUndo || [];
+  state.drawUndo.push({ ...state.imageGrid });
+  if (state.drawUndo.length > UNDO_LIMIT) state.drawUndo.shift();
+  document.getElementById("draw-undo-btn").disabled = false;
+}
+
+function undo() {
+  const previous = (state.drawUndo || []).pop();
+  if (!previous) return;
+  const codes = new Uint8Array(previous.width * previous.height);
+  for (let i = 0; i < codes.length; i++) codes[i] = previous.pixels.charCodeAt(i) - 48;
+  document.getElementById("image-width").value = previous.width;
+  document.getElementById("image-height").value = previous.height;
+  setGrid(previous.width, previous.height, codes);
+  document.getElementById("draw-undo-btn").disabled = state.drawUndo.length === 0;
+}
+
+function selectedPaintCode() {
+  const active = document.querySelector("#draw-palette .swatch.active");
+  return active ? Number.parseInt(active.dataset.code, 10) : 1;
+}
+
+function cellAt(event) {
+  const grid = state.imageGrid;
+  const canvas = document.getElementById("image-preview-canvas");
+  const rect = canvas.getBoundingClientRect();
+  const size = rect.width / grid.width; // read from the rect so CSS scaling can't skew it
+  const x = Math.floor((event.clientX - rect.left) / size);
+  const y = Math.floor((event.clientY - rect.top) / size);
+  if (x < 0 || y < 0 || x >= grid.width || y >= grid.height) return null;
+  return { x, y };
+}
+
+// Pointer events arrive far more sparsely than the cells a drag crosses -
+// move quickly and you'd get a dotted line - so join each event to the
+// last one with a Bresenham line rather than painting single cells.
+function cellsBetween(from, to) {
+  const cells = [];
+  let x = from.x;
+  let y = from.y;
+  const dx = Math.abs(to.x - x);
+  const dy = -Math.abs(to.y - y);
+  const sx = x < to.x ? 1 : -1;
+  const sy = y < to.y ? 1 : -1;
+  let err = dx + dy;
+  for (;;) {
+    cells.push({ x, y });
+    if (x === to.x && y === to.y) return cells;
+    const e2 = 2 * err;
+    if (e2 >= dy) { err += dy; x += sx; }
+    if (e2 <= dx) { err += dx; y += sy; }
+  }
+}
+
+function paintAt(event, code) {
+  const cell = cellAt(event);
+  if (!cell) return;
+  const grid = state.imageGrid;
+  const codes = gridCodes();
+  let changed = false;
+  cellsBetween(lastCell || cell, cell).forEach(({ x, y }) => {
+    const index = y * grid.width + x;
+    if (codes[index] === code) return;
+    codes[index] = code;
+    changed = true;
+  });
+  lastCell = cell;
+  if (!changed) return; // no needless re-render while dragging within a cell
+  setGrid(grid.width, grid.height, codes);
+}
+
+(function wireDrawing() {
+  const canvas = document.getElementById("image-preview-canvas");
+
+  canvas.addEventListener("pointerdown", (event) => {
+    if (!drawing() || !state.imageGrid) return;
+    event.preventDefault();
+    // Right-click (or ctrl-click) erases - the same reach-for-the-other-
+    // button reflex every pixel editor has.
+    painting = event.button === 2 || event.ctrlKey ? 0 : selectedPaintCode();
+    lastCell = null; // a new stroke starts where it starts - don't join it to the last one
+    // preventDefault above stops the browser moving focus by itself, so
+    // move it here: without this, focus stays on whatever select or field
+    // was touched last (the zoom dropdown, say) and the 1-4 shortcuts go
+    // quietly dead - or worse, retarget that control.
+    canvas.focus();
+    pushUndo();
+    canvas.setPointerCapture(event.pointerId);
+    paintAt(event, painting);
+  });
+
+  canvas.addEventListener("pointermove", (event) => {
+    if (painting === null) return;
+    paintAt(event, painting);
+  });
+
+  const stop = () => { painting = null; lastCell = null; };
+  canvas.addEventListener("pointerup", stop);
+  canvas.addEventListener("pointercancel", stop);
+  canvas.addEventListener("contextmenu", (event) => { if (drawing()) event.preventDefault(); });
+
+  document.getElementById("draw-palette").addEventListener("click", (event) => {
+    const swatch = event.target.closest(".swatch");
+    if (!swatch) return;
+    document.querySelectorAll("#draw-palette .swatch").forEach((s) => s.classList.remove("active"));
+    swatch.classList.add("active");
+  });
+
+  // 1-4 pick a colour, the way every drawing tool does. Ignored while
+  // you're typing into the message editor or any other field.
+  document.addEventListener("keydown", (event) => {
+    if (!drawing()) return;
+    const tag = document.activeElement && document.activeElement.tagName;
+    if (tag === "INPUT" || tag === "SELECT" || document.activeElement.isContentEditable) return;
+    const index = ["1", "2", "3", "4"].indexOf(event.key);
+    if (index === -1) return;
+    const swatch = document.querySelector(`#draw-palette .swatch[data-code="${index}"]`);
+    if (swatch) swatch.click();
+  });
+
+  document.getElementById("draw-undo-btn").addEventListener("click", undo);
+
+  document.getElementById("draw-clear-btn").addEventListener("click", () => {
+    const { width, height } = gridSizeFromInputs();
+    pushUndo();
+    blankGrid(width, height);
+  });
+
+  document.getElementById("draw-zoom").addEventListener("change", renderGrid);
+})();
+
+// --- Uploading ---
 
 // What size to default the width/height fields to for a freshly loaded
 // image. Anything that already fits the display keeps its exact pixel
@@ -592,9 +851,7 @@ function naturalTargetSize(img) {
 
 function processImage() {
   if (!loadedImage) return;
-
-  const targetW = clampInt(document.getElementById("image-width").value, 1, 255);
-  const targetH = clampInt(document.getElementById("image-height").value, 1, 32);
+  const { width: targetW, height: targetH } = gridSizeFromInputs();
 
   const work = document.createElement("canvas");
   work.width = targetW;
@@ -615,27 +872,8 @@ function processImage() {
 
   const imageData = ctx.getImageData(0, 0, targetW, targetH);
   const dither = document.getElementById("image-dither").value === "dither";
-  const codes = ditherToDots(imageData, targetW, targetH, dither);
-
-  state.imageGrid = { width: targetW, height: targetH, pixels: Array.from(codes).join("") };
-  renderImagePreview(codes, targetW, targetH);
-  updateChipFraction(codes);
-  document.getElementById("image-force-btn").hidden = true;
-  document.getElementById("image-error").textContent = "";
-}
-
-function renderImagePreview(codes, width, height) {
-  const canvas = document.getElementById("image-preview-canvas");
-  const cellSize = Math.max(2, Math.min(12, Math.floor(400 / width)));
-  canvas.width = width * cellSize;
-  canvas.height = height * cellSize;
-  const ctx = canvas.getContext("2d");
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      ctx.fillStyle = DOTS_PREVIEW_COLORS[codes[y * width + x]];
-      ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
-    }
-  }
+  pushUndo(); // so switching to Draw and hating the dither isn't a dead end
+  setGrid(targetW, targetH, ditherToDots(imageData, targetW, targetH, dither));
 }
 
 // Mirrors AlphaSign::DotsFile#lit_chip_fraction (yellow = 2 chips, red/green
@@ -675,15 +913,47 @@ document.getElementById("image-file").addEventListener("change", (event) => {
   reader.readAsDataURL(file);
 });
 
-document.getElementById("image-width").addEventListener("change", processImage);
-document.getElementById("image-height").addEventListener("change", processImage);
+// --- Switching between the two ---
+
+function applySourceMode() {
+  const draw = drawing();
+  document.getElementById("image-draw-panel").hidden = !draw;
+  document.getElementById("image-upload-panel").hidden = draw;
+  document.getElementById("draw-hint").hidden = !draw;
+  // Switching to Draw keeps whatever is on the canvas, so an upload can be
+  // touched up by hand rather than started again from nothing.
+  if (draw && !state.imageGrid) {
+    const { width, height } = gridSizeFromInputs();
+    blankGrid(width, height);
+  } else {
+    renderGrid();
+  }
+}
+
+document.getElementById("image-source").addEventListener("change", applySourceMode);
+
+function onSizeChanged() {
+  const { width, height } = gridSizeFromInputs();
+  if (drawing()) {
+    if (state.imageGrid && (state.imageGrid.width !== width || state.imageGrid.height !== height)) {
+      pushUndo();
+      resizeGrid(width, height);
+    }
+  } else {
+    processImage();
+  }
+}
+
+document.getElementById("image-width").addEventListener("change", onSizeChanged);
+document.getElementById("image-height").addEventListener("change", onSizeChanged);
 document.getElementById("image-dither").addEventListener("change", processImage);
+window.addEventListener("resize", () => { if (drawing()) renderGrid(); });
 
 async function sendImage(dryRun, force) {
   const errorEl = document.getElementById("image-error");
   errorEl.textContent = "";
   if (!state.imageGrid) {
-    errorEl.textContent = "Choose an image first.";
+    errorEl.textContent = drawing() ? "Draw something first." : "Choose an image first.";
     return;
   }
 
@@ -733,5 +1003,6 @@ document.getElementById("image-force-btn").addEventListener("click", () => sendI
   await loadOptions();
   await refreshStatus();
   await refreshMessages();
+  applySourceMode(); // lays out the image card and puts a blank grid up to draw on
   setInterval(refreshStatus, 15000);
 })();
