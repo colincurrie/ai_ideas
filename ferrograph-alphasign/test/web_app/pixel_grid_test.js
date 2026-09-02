@@ -11,7 +11,7 @@ const PixelGrid = require("../../web_app/public/pixel_grid.js");
 const {
   clampInt, nearestColorIndex, ditherToDots, naturalTargetSize,
   encodePixels, decodePixels, resizeCodes, cellsBetween, paintLine,
-  chipFraction, fitCellSize, SIGN_WIDTH, SIGN_HEIGHT
+  chipFraction, fitCellSize, codesToRgba, pngFileName, SIGN_WIDTH, SIGN_HEIGHT
 } = PixelGrid;
 
 const OFF = 0, RED = 1, GREEN = 2, YELLOW = 3;
@@ -253,5 +253,60 @@ test.describe("fitCellSize", () => {
   test("never drops below a visible cell, even with no room", () => {
     assert.equal(fitCellSize(0, 135), 2);
     assert.equal(fitCellSize(-10, 135), 2, "a hidden panel measures as nothing");
+  });
+});
+
+test.describe("codesToRgba", () => {
+  test("paints each code as its LED primary, fully opaque", () => {
+    const data = codesToRgba(decodePixels("0123"), 4, 1);
+    assert.deepEqual(Array.from(data), [
+      0, 0, 0, 255,
+      255, 0, 0, 255,
+      0, 255, 0, 255,
+      255, 255, 0, 255
+    ]);
+  });
+
+  test("off pixels are opaque black, not transparent", () => {
+    const data = codesToRgba(decodePixels("00"), 2, 1);
+    assert.equal(data[3], 255);
+    assert.equal(data[7], 255);
+  });
+
+  // The whole point of exporting at true size in the sign's own colours:
+  // the PNG is the working copy, so loading it back has to give the exact
+  // pixels it was saved from. This is that round trip, minus the file.
+  test("round-trips through the importer without losing a pixel", () => {
+    const original = "0123321001233210";
+    const width = 4;
+    const height = 4;
+    const data = codesToRgba(decodePixels(original), width, height);
+    const reimported = ditherToDots({ data }, width, height, false);
+    assert.equal(encodePixels(reimported), original);
+  });
+
+  test("round-trips a full-width picture too", () => {
+    const codes = new Uint8Array(SIGN_WIDTH * SIGN_HEIGHT);
+    codes.forEach((_, i) => { codes[i] = i % 4; });
+    const data = codesToRgba(codes, SIGN_WIDTH, SIGN_HEIGHT);
+    const reimported = ditherToDots({ data }, SIGN_WIDTH, SIGN_HEIGHT, false);
+    assert.equal(encodePixels(reimported), encodePixels(codes));
+  });
+
+  test("sizes the buffer for the whole grid", () => {
+    assert.equal(codesToRgba(new Uint8Array(12), 4, 3).length, 4 * 3 * 4);
+  });
+});
+
+test.describe("pngFileName", () => {
+  test("names the file after the label and its true size", () => {
+    assert.equal(pngFileName("Q", 8, 8), "sign-image-Q-8x8.png");
+    assert.equal(pngFileName("P", 135, 16), "sign-image-P-135x16.png");
+  });
+
+  test("strips anything that has no business in a filename", () => {
+    assert.equal(pngFileName("../etc", 2, 2), "sign-image-etc-2x2.png");
+    assert.equal(pngFileName("", 2, 2), "sign-image-image-2x2.png");
+    assert.equal(pngFileName("/", 2, 2), "sign-image-image-2x2.png");
   });
 });

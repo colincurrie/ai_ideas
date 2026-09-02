@@ -516,7 +516,7 @@ document.getElementById("raw-send-btn").addEventListener("click", () => sendRaw(
 const {
   PREVIEW_COLORS, SIGN_WIDTH, SIGN_HEIGHT, clampInt, ditherToDots,
   naturalTargetSize, encodePixels, decodePixels, resizeCodes, paintLine,
-  chipFraction, fitCellSize
+  chipFraction, fitCellSize, codesToRgba, pngFileName
 } = PixelGrid;
 
 let loadedImage = null;
@@ -905,6 +905,52 @@ document.getElementById("image-insert-btn").addEventListener("click", () => {
   document.getElementById("image-hint").textContent =
     `Image ${label} added to the message. Send the message to put it on the display.`;
 });
+
+// Saves the picture as a PNG, one image pixel per LED. True size on
+// purpose: the app keeps nothing between reloads, so the PNG is the
+// working copy, and at 1:1 in the sign's own four colours it re-imports to
+// exactly the pixels it was saved from. Scaling it up here would look
+// nicer in a file browser and quietly destroy that.
+function downloadPng() {
+  const grid = state.imageGrid;
+  const errorEl = document.getElementById("image-error");
+  const hintEl = document.getElementById("image-hint");
+  if (!grid) {
+    errorEl.textContent = drawing() ? "Draw something first." : "Choose an image first.";
+    hintEl.textContent = ""; // don't leave an older success message sitting under an error
+    return;
+  }
+
+  errorEl.textContent = "";
+  const label = document.getElementById("image-label").value;
+  const canvas = document.createElement("canvas");
+  canvas.width = grid.width;
+  canvas.height = grid.height;
+  canvas.getContext("2d").putImageData(
+    new ImageData(codesToRgba(gridCodes(), grid.width, grid.height), grid.width, grid.height), 0, 0
+  );
+
+  canvas.toBlob((blob) => {
+    if (!blob) {
+      errorEl.textContent = "Couldn't render the PNG.";
+      hintEl.textContent = "";
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = pngFileName(label, grid.width, grid.height);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    hintEl.textContent =
+      `Saved ${link.download} - ${grid.width}×${grid.height}, one pixel per LED. ` +
+      "Load it back with \"Uploading a file\" to carry on where you left off.";
+  }, "image/png");
+}
+
+document.getElementById("image-download-btn").addEventListener("click", downloadPng);
 
 document.getElementById("image-preview-btn").addEventListener("click", () => sendImage(true));
 document.getElementById("image-send-btn").addEventListener("click", () => sendImage(false));

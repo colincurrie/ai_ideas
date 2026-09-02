@@ -289,6 +289,14 @@ exceeds the sign's 50% safety limit.
 - Undo is per stroke, and resizing keeps what you've drawn (anchored
   top-left) rather than throwing it away.
 
+**Download PNG** saves whatever is on the grid to your computer at true
+size - one image pixel per LED, in the sign's own four colours - and
+uploading that file back reproduces it exactly. Nothing in this app
+persists between reloads (`serial_api` only tracks labels in memory), so
+the PNG is how you keep a picture. It's exported at 1:1 on purpose:
+scaling it up would look better in a file browser and quietly destroy the
+round trip, since a re-import would then have to resample and dither it.
+
 **Uploading a file.** Mapped to the sign's red/green/yellow palette in the
 browser (HTML canvas). Images are never scaled **up**: anything that
 already fits 135x16 is used at its exact pixel size, so a 16x16 icon stays

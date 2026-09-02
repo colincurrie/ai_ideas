@@ -193,10 +193,36 @@
     return Math.max(2, Math.min(20, Math.floor(available / width)));
   }
 
+  // RGBA bytes for a grid, ready for ImageData and so for a PNG.
+  //
+  // Painted with the LED primaries (MATCH_PALETTE), not the softened
+  // preview colours: those are what nearestColorIndex matches against, so
+  // a saved PNG re-imports to exactly the codes it was saved from. Off
+  // pixels are opaque black rather than transparent, which is both what
+  // the sign shows and what the upload path composites onto anyway.
+  function codesToRgba(codes, width, height) {
+    const data = new Uint8ClampedArray(width * height * 4);
+    for (let i = 0; i < width * height; i++) {
+      const [r, g, b] = MATCH_PALETTE[ORDER[codes[i]] || "off"];
+      data[i * 4] = r;
+      data[i * 4 + 1] = g;
+      data[i * 4 + 2] = b;
+      data[i * 4 + 3] = 255;
+    }
+    return data;
+  }
+
+  // Names a saved picture after what it is, so a folder of them stays
+  // readable: the label it was saved under and its true pixel size.
+  function pngFileName(label, width, height) {
+    const safe = String(label).replace(/[^A-Za-z0-9]/g, "") || "image";
+    return `sign-image-${safe}-${width}x${height}.png`;
+  }
+
   return {
     MATCH_PALETTE, ORDER, PREVIEW_COLORS, SIGN_WIDTH, SIGN_HEIGHT,
     clampInt, nearestColorIndex, ditherToDots, naturalTargetSize,
     encodePixels, decodePixels, resizeCodes, cellsBetween, paintLine,
-    chipFraction, fitCellSize
+    chipFraction, fitCellSize, codesToRgba, pngFileName
   };
 });

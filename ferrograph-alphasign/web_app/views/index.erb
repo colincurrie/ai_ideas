@@ -274,12 +274,13 @@
     <div id="image-canvas-scroll">
       <canvas id="image-preview-canvas" tabindex="0"></canvas>
     </div>
-    <p class="muted" id="draw-hint" hidden>Click or drag to paint. Right-click (or ctrl-click) erases; keys <kbd>1</kbd>-<kbd>4</kbd> pick a colour. Every 8th gridline is brighter, for counting across. Uploading a picture drops it onto this same grid, so you can fix by hand whatever the dither got wrong.</p>
+    <p class="muted" id="draw-hint" hidden>Click or drag to paint. Right-click (or ctrl-click) erases; keys <kbd>1</kbd>-<kbd>4</kbd> pick a colour. Every 8th gridline is brighter, for counting across. Uploading a picture drops it onto this same grid, so you can fix by hand whatever the dither got wrong. <strong>Download PNG</strong> saves what's on the grid to your computer at true size - one image pixel per LED - and uploading that file back reproduces it exactly, which is how you keep a picture between sessions.</p>
     <div id="image-chip-fraction" class="muted" style="margin-top:0.5rem;"></div>
     <div class="actions">
       <button type="button" id="image-preview-btn">Preview bytes</button>
       <button type="button" id="image-send-btn" class="primary">Save to sign</button>
       <button type="button" id="image-insert-btn" disabled title="Save the image first">Insert into message</button>
+      <button type="button" id="image-download-btn" title="Save the picture to your computer as a PNG, at true size">Download PNG</button>
       <button type="button" id="image-force-btn" class="danger" hidden>Save anyway (override LED safety check)</button>
     </div>
     <div class="error-msg" id="image-error"></div>
