@@ -186,8 +186,8 @@ bundle exec rackup web_app/config.ru -o 127.0.0.1 -p 4567
 ```
 
 ...or for local development, copy `.env.example` to `.env` and fill it in
-once - both services load it automatically (via the `dotenv` gem) from
-whatever directory you run them from (the repo root). **Wrap
+once - both services load it automatically (via the `dotenv` gem) from the
+repo root, regardless of which directory you start them from. **Wrap
 `WEB_APP_PASSWORD_HASH` in single quotes in `.env`** - bcrypt hashes are
 full of `$` characters, which `dotenv` will otherwise try to interpolate
 as shell-style variable references and silently mangle. See the comments

@@ -1,4 +1,11 @@
-require "dotenv/load" # loads .env from the cwd (repo root, per README/DEPLOY.md) if present - never overrides already-set env vars (e.g. from systemd)
+require "dotenv"
+# Resolved against the repo root rather than the working directory: plain
+# `require "dotenv/load"` only looks in Dir.pwd, so starting the service
+# from anywhere else (a subdirectory, or a systemd unit with a different
+# WorkingDirectory) would silently find nothing. Never overrides env vars
+# that are already set, e.g. from a systemd EnvironmentFile.
+Dotenv.load(File.expand_path("../.env", __dir__))
+
 require "sinatra/base"
 require "json"
 

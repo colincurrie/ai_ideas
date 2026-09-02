@@ -1,4 +1,8 @@
-require "dotenv/load" # loads .env from the cwd (repo root, per README/DEPLOY.md) if present - never overrides already-set env vars (e.g. from systemd)
+require "dotenv"
+# Resolved against the repo root rather than the working directory - see
+# the matching comment in serial_api/app.rb for why.
+Dotenv.load(File.expand_path("../.env", __dir__))
+
 require "sinatra/base"
 require "bcrypt"
 require "json"
