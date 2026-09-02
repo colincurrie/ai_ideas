@@ -1,9 +1,27 @@
 require "rake/testtask"
 
-Rake::TestTask.new do |t|
+Rake::TestTask.new("test:ruby") do |t|
   t.libs << "test" << "lib"
   t.pattern = "test/**/*_test.rb"
   t.verbose = true
 end
+
+# The browser-side picture logic (web_app/public/pixel_grid.js) is tested
+# with node's built-in runner - no framework, no build step. Node isn't
+# needed to run this project, only to test that one file, so a machine
+# without it gets a clear skip rather than a failure.
+desc "Run the JavaScript tests (node's built-in test runner)"
+task "test:js" do
+  unless system("node --version > /dev/null 2>&1")
+    warn "SKIPPING JavaScript tests: node isn't installed. " \
+         "web_app/public/pixel_grid.js is left unchecked - install node to cover it."
+    next
+  end
+
+  sh 'node --test "test/**/*_test.js"'
+end
+
+desc "Run the Ruby and JavaScript test suites"
+task test: ["test:ruby", "test:js"]
 
 task default: :test

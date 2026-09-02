@@ -307,16 +307,37 @@ systemd units and Tailscale for remote access, see **`DEPLOY.md`**.
 bundle exec rake test
 ```
 
-Covers `lib/alpha_sign`, `serial_api`, and `web_app` - all pure
-request-level tests (`Rack::Test` against the Sinatra apps directly, with
-`serial_api`'s tests using `dry_run` and `web_app`'s using a stub client
-in place of a real `serial_api`), so none of it needs real hardware or a
-running server. Also runs fine without `bundle install`/`serialport` for
-just the library tests, e.g.:
+That runs two suites:
+
+**Ruby** (`rake test:ruby`) covers `lib/alpha_sign`, `serial_api` and
+`web_app` - all pure request-level tests (`Rack::Test` against the Sinatra
+apps directly, with `serial_api`'s using `dry_run` and `web_app`'s using a
+stub client in place of a real `serial_api`), so none of it needs real
+hardware or a running server. It also runs fine without `bundle
+install`/`serialport` for just the library tests:
 
 ```
 ruby -Ilib -Itest test/alpha_sign/packet_test.rb
 ```
+
+**JavaScript** (`rake test:js`) covers `web_app/public/pixel_grid.js` - the
+palette matching, dithering, pixel encoding and grid arithmetic behind the
+Image card - using node's built-in runner, so there's no framework and no
+build step:
+
+```
+node --test "test/**/*_test.js"
+```
+
+`pixel_grid.js` is deliberately free of any DOM so it can be required
+directly; `app.js` holds the wiring around it. Node isn't needed to *run*
+this project, only to test that one file, so `rake test` prints a clear
+skip rather than failing if node isn't installed.
+
+Neither suite covers the browser wiring itself - event handling, canvas
+rendering, the compose editor. That's checked by driving a real browser
+against both services running locally, which is where several of the bugs
+in this repo's history were actually found.
 
 ## Known limitations / roadmap
 

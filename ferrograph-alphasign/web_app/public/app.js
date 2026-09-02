@@ -485,92 +485,14 @@ document.getElementById("raw-send-btn").addEventListener("click", () => sendRaw(
 // Everything from file load through dithering happens in the browser -
 // serial_api never sees raw image bytes, only the final width/height/pixel
 // grid, which keeps that service free of any image-processing dependency.
-// Two separate palettes on purpose:
-//
-// MATCHING uses the sign's actual LED primaries - a pixel is red LED on,
-// green LED on, both (yellow), or neither. Using softened "nice looking"
-// values here instead skews the colour maths badly: with a muted yellow,
-// plain white ends up nearer to green than to yellow in RGB distance, even
-// though yellow (both LEDs lit) is the brightest thing the sign can do.
-// PREVIEW is only for drawing the on-screen preview, where the softer
-// colours are easier on the eye.
-const DOTS_MATCH_PALETTE = { off: [0, 0, 0], red: [255, 0, 0], green: [0, 255, 0], yellow: [255, 255, 0] };
-const DOTS_ORDER = ["off", "red", "green", "yellow"]; // index == the wire's pixel digit code
-const DOTS_PREVIEW_COLORS = ["#000", "#ff5a5a", "#5aff8a", "#ffe45a"];
-
-function nearestDotsColorIndex(r, g, b) {
-  let best = 0;
-  let bestDist = Infinity;
-  DOTS_ORDER.forEach((name, i) => {
-    const [pr, pg, pb] = DOTS_MATCH_PALETTE[name];
-    const dist = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2;
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = i;
-    }
-  });
-  return best;
-}
-
-function distributeError(buf, width, height, x, y, er, eg, eb) {
-  const add = (xx, yy, factor) => {
-    if (xx < 0 || xx >= width || yy < 0 || yy >= height) return;
-    const idx = (yy * width + xx) * 3;
-    buf[idx] += er * factor;
-    buf[idx + 1] += eg * factor;
-    buf[idx + 2] += eb * factor;
-  };
-  add(x + 1, y, 7 / 16);
-  add(x - 1, y + 1, 3 / 16);
-  add(x, y + 1, 5 / 16);
-  add(x + 1, y + 1, 1 / 16);
-}
-
-// Quantizes down to the 4-color dots palette. Returns a flat array of
-// palette indices (0=off, 1=red, 2=green, 3=yellow), one per pixel,
-// row-major - same layout the wire format and the preview canvas both want.
-//
-// +dither+ picks the trade-off: Floyd-Steinberg error diffusion approximates
-// in-between tones by mixing pixels, which is what you want for photos and
-// gradients, but it shreds high-contrast graphics - text and logos come out
-// as red/green confetti instead of readable shapes. With dithering off it's
-// a straight nearest-colour map, so solid areas stay solid.
-function ditherToDots(imageData, width, height, dither = true) {
-  const buf = new Float32Array(width * height * 3);
-  for (let i = 0; i < width * height; i++) {
-    buf[i * 3] = imageData.data[i * 4];
-    buf[i * 3 + 1] = imageData.data[i * 4 + 1];
-    buf[i * 3 + 2] = imageData.data[i * 4 + 2];
-  }
-
-  const codes = new Uint8Array(width * height);
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const idx = y * width + x;
-      const r = buf[idx * 3];
-      const g = buf[idx * 3 + 1];
-      const b = buf[idx * 3 + 2];
-      const code = nearestDotsColorIndex(r, g, b);
-      codes[idx] = code;
-      if (!dither) continue;
-
-      const [pr, pg, pb] = DOTS_MATCH_PALETTE[DOTS_ORDER[code]];
-      distributeError(buf, width, height, x, y, r - pr, g - pg, b - pb);
-    }
-  }
-  return codes;
-}
-function clampInt(value, min, max) {
-  const n = Number.parseInt(value, 10);
-  if (Number.isNaN(n)) return min;
-  return Math.min(max, Math.max(min, n));
-}
-
-// The Aurora 63's matrix, and the hard ceiling on both the drawing grid
-// and an upload: the protocol allows a bigger picture (up to 255x32) but
-// this sign has nowhere to put one.
-const SIGN_WIDTH = 135;
-const SIGN_HEIGHT = 16;
+// The picture logic itself lives in pixel_grid.js (loaded first, and
+// covered by test/web_app/pixel_grid_test.js); what's left here is the DOM
+// wiring around it.
+const {
+  PREVIEW_COLORS, SIGN_WIDTH, SIGN_HEIGHT, clampInt, ditherToDots,
+  naturalTargetSize, encodePixels, decodePixels, resizeCodes, paintLine,
+  chipFraction, fitCellSize
+} = PixelGrid;
 
 let loadedImage = null;
 
@@ -583,15 +505,11 @@ let loadedImage = null;
 // rather than having to get it perfect outside the app first.
 
 function gridCodes() {
-  const grid = state.imageGrid;
-  if (!grid) return null;
-  const codes = new Uint8Array(grid.width * grid.height);
-  for (let i = 0; i < codes.length; i++) codes[i] = grid.pixels.charCodeAt(i) - 48;
-  return codes;
+  return state.imageGrid ? decodePixels(state.imageGrid.pixels) : null;
 }
 
 function setGrid(width, height, codes) {
-  state.imageGrid = { width, height, pixels: Array.from(codes).join("") };
+  state.imageGrid = { width, height, pixels: encodePixels(codes) };
   renderGrid();
   updateChipFraction(codes);
   document.getElementById("image-force-btn").hidden = true;
@@ -602,20 +520,10 @@ function blankGrid(width, height) {
   setGrid(width, height, new Uint8Array(width * height));
 }
 
-// Keeps whatever is already drawn, anchored top-left, so nudging the size
-// while working doesn't throw the picture away.
 function resizeGrid(width, height) {
   const old = state.imageGrid;
-  const codes = new Uint8Array(width * height);
-  if (old) {
-    const oldCodes = gridCodes();
-    for (let y = 0; y < Math.min(height, old.height); y++) {
-      for (let x = 0; x < Math.min(width, old.width); x++) {
-        codes[y * width + x] = oldCodes[y * old.width + x];
-      }
-    }
-  }
-  setGrid(width, height, codes);
+  setGrid(width, height, old ? resizeCodes(gridCodes(), old.width, old.height, width, height)
+                             : new Uint8Array(width * height));
 }
 
 function gridSizeFromInputs() {
@@ -645,7 +553,7 @@ function cellSize(width) {
   const card = document.getElementById("image-canvas-scroll").parentElement;
   const style = getComputedStyle(card);
   const available = card.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - 2;
-  return Math.max(2, Math.min(20, Math.floor(available / width)));
+  return fitCellSize(available, width);
 }
 
 function renderGrid() {
@@ -666,7 +574,7 @@ function renderGrid() {
   const ctx = canvas.getContext("2d");
   for (let y = 0; y < grid.height; y++) {
     for (let x = 0; x < grid.width; x++) {
-      ctx.fillStyle = DOTS_PREVIEW_COLORS[codes[y * grid.width + x]];
+      ctx.fillStyle = PREVIEW_COLORS[codes[y * grid.width + x]];
       ctx.fillRect(x * size, y * size, size, size);
     }
   }
@@ -710,8 +618,7 @@ function pushUndo() {
 function undo() {
   const previous = (state.drawUndo || []).pop();
   if (!previous) return;
-  const codes = new Uint8Array(previous.width * previous.height);
-  for (let i = 0; i < codes.length; i++) codes[i] = previous.pixels.charCodeAt(i) - 48;
+  const codes = decodePixels(previous.pixels);
   document.getElementById("image-width").value = previous.width;
   document.getElementById("image-height").value = previous.height;
   setGrid(previous.width, previous.height, codes);
@@ -734,42 +641,14 @@ function cellAt(event) {
   return { x, y };
 }
 
-// Pointer events arrive far more sparsely than the cells a drag crosses -
-// move quickly and you'd get a dotted line - so join each event to the
-// last one with a Bresenham line rather than painting single cells.
-function cellsBetween(from, to) {
-  const cells = [];
-  let x = from.x;
-  let y = from.y;
-  const dx = Math.abs(to.x - x);
-  const dy = -Math.abs(to.y - y);
-  const sx = x < to.x ? 1 : -1;
-  const sy = y < to.y ? 1 : -1;
-  let err = dx + dy;
-  for (;;) {
-    cells.push({ x, y });
-    if (x === to.x && y === to.y) return cells;
-    const e2 = 2 * err;
-    if (e2 >= dy) { err += dy; x += sx; }
-    if (e2 <= dx) { err += dx; y += sy; }
-  }
-}
-
 function paintAt(event, code) {
   const cell = cellAt(event);
   if (!cell) return;
   const grid = state.imageGrid;
   const codes = gridCodes();
-  let changed = false;
-  cellsBetween(lastCell || cell, cell).forEach(({ x, y }) => {
-    const index = y * grid.width + x;
-    if (codes[index] === code) return;
-    codes[index] = code;
-    changed = true;
-  });
+  const changed = paintLine(codes, grid.width, grid.height, lastCell || cell, cell, code);
   lastCell = cell;
-  if (!changed) return; // no needless re-render while dragging within a cell
-  setGrid(grid.width, grid.height, codes);
+  if (changed) setGrid(grid.width, grid.height, codes);
 }
 
 (function wireDrawing() {
@@ -786,7 +665,10 @@ function paintAt(event, code) {
     // move it here: without this, focus stays on whatever select or field
     // was touched last (the zoom dropdown, say) and the 1-4 shortcuts go
     // quietly dead - or worse, retarget that control.
-    canvas.focus();
+    // preventScroll matters: without it the browser scrolls the canvas into
+    // view on the click that starts a stroke, jumping the page out from
+    // under the cursor mid-drag.
+    canvas.focus({ preventScroll: true });
     pushUndo();
     canvas.setPointerCapture(event.pointerId);
     paintAt(event, painting);
@@ -834,21 +716,6 @@ function paintAt(event, code) {
 
 // --- Uploading ---
 
-// What size to default the width/height fields to for a freshly loaded
-// image. Anything that already fits the display keeps its exact pixel
-// dimensions - a 16x16 icon stays a 16x16 icon rather than being blown up
-// to fill the panel, which would only invent detail that isn't there.
-function naturalTargetSize(img) {
-  if (img.width <= SIGN_WIDTH && img.height <= SIGN_HEIGHT) {
-    return { width: img.width, height: img.height };
-  }
-  const scale = Math.min(SIGN_WIDTH / img.width, SIGN_HEIGHT / img.height);
-  return {
-    width: Math.max(1, Math.round(img.width * scale)),
-    height: Math.max(1, Math.round(img.height * scale))
-  };
-}
-
 function processImage() {
   if (!loadedImage) return;
   const { width: targetW, height: targetH } = gridSizeFromInputs();
@@ -876,13 +743,8 @@ function processImage() {
   setGrid(targetW, targetH, ditherToDots(imageData, targetW, targetH, dither));
 }
 
-// Mirrors AlphaSign::DotsFile#lit_chip_fraction (yellow = 2 chips, red/green
-// = 1, off = 0) so the 50% LED safety warning shows before the user even
-// hits Send, not just after serial_api rejects it.
 function updateChipFraction(codes) {
-  let chips = 0;
-  codes.forEach((c) => { chips += c === 3 ? 2 : c === 0 ? 0 : 1; });
-  const fraction = chips / (codes.length * 2);
+  const fraction = chipFraction(codes);
   state.imageChipFraction = fraction;
 
   const el = document.getElementById("image-chip-fraction");
@@ -901,7 +763,7 @@ document.getElementById("image-file").addEventListener("change", (event) => {
       // Size the target box to the image rather than the other way round,
       // so icons keep their exact dimensions and only oversized artwork is
       // scaled down. Both fields stay editable if you want something else.
-      const natural = naturalTargetSize(img);
+      const natural = naturalTargetSize(img.width, img.height);
       document.getElementById("image-width").value = natural.width;
       document.getElementById("image-height").value = natural.height;
       document.getElementById("image-source-size").textContent =
