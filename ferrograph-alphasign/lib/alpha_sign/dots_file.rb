@@ -16,11 +16,20 @@ module AlphaSign
   class DotsFile
     MAX_HEIGHT = 32  # protocol limit
     MAX_WIDTH = 255  # protocol limit
-    # Literal CR (0x0D) marking the end of each row, sent via the 3-byte
-    # escape form so XDF reads it as a literal data byte rather than the
-    # New Line control code (which 0x0D would otherwise trigger - see
-    # Appendix A in docs/xdf-firmware-notes.md).
-    ROW_TERMINATOR = "_0D"
+    # A raw CR (0x0D) marks the end of each row - matching the manual's
+    # storage accounting for a colour file, "picture area / 4, plus one
+    # byte per row, plus 13 byte overhead": one delimiter byte per row.
+    #
+    # This was previously "_0D", the 3-byte format's escape for a literal
+    # 0x0D. That was wrong, and the sign showed it: a picture came out as
+    # its top row alone. Packet frames it with SOH = 0x01, which selects
+    # the 1-byte protocol format, and the manual is explicit that "the 1
+    # byte and 2/3 byte formats should not be mixed within a single message
+    # frame" - so inside our frames "_" is a literal underscore, not an
+    # escape introducer. The sign read the header and the first row's
+    # pixels correctly, then hit a character that isn't a colour code
+    # ("0"-"8") and stopped.
+    ROW_TERMINATOR = "\r"
 
     attr_reader :label, :rows
 

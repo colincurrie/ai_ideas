@@ -4,14 +4,14 @@ module AlphaSign
   class DotsFileTest < Minitest::Test
     def test_contents_matches_hand_derived_wire_format
       # I(command) P(label) 02(height=2, hex) 03(width=3, hex)
-      # row "123" + _0D(literal CR) + row "000" + _0D
+      # row "123" + CR + row "000" + CR
       dots = DotsFile.new(["123", "000"], label: "P")
-      assert_equal "IP0203123_0D000_0D", dots.contents
+      assert_equal "IP0203123\r000\r", dots.contents
     end
 
     def test_accepts_named_colors_in_rows
       dots = DotsFile.new([%w[off red green yellow]], label: "P")
-      assert_equal "IP01040123_0D", dots.contents
+      assert_equal "IP01040123\r", dots.contents
     end
 
     def test_height_and_width
@@ -51,6 +51,27 @@ module AlphaSign
       dots = DotsFile.new(["1"], label: "P")
       packet = dots.to_packet
       assert_includes packet.to_s, dots.contents
+    end
+
+    # Regression: the terminator used to be "_0D", the 3-byte protocol
+    # format's escape for a literal 0x0D. Packet frames everything with
+    # SOH = 0x01, which selects the 1-byte format, and the manual forbids
+    # mixing formats within one frame - so the sign saw a literal "_",
+    # which isn't a colour code, and stopped. A picture displayed as its
+    # top row and nothing else. It must be a raw CR byte.
+    def test_rows_are_separated_by_a_raw_cr_not_a_three_byte_escape
+      contents = DotsFile.new(%w[12 30], label: "P").contents
+      assert_equal "IP0202" + "12\r" + "30\r", contents
+      refute_includes contents, "_", "an escape introducer is a literal underscore in a 1-byte frame"
+      assert_equal 2, contents.count("\r"), "one terminator per row, including the last"
+    end
+
+    # The sign reads pixel data starting immediately after the header -
+    # proved by it having rendered the first row correctly even while
+    # choking on the old terminator.
+    def test_no_separator_between_the_header_and_the_first_row
+      assert_equal "IQ0808", DotsFile.new(["0" * 8] * 8, label: "Q").contents[0, 6]
+      assert_equal "0", DotsFile.new(["0" * 8] * 8, label: "Q").contents[6]
     end
   end
 end

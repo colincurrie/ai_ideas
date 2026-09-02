@@ -75,7 +75,7 @@ module SerialApi
 
     def test_dots_pixels_are_split_into_rows_by_width
       @layout.put_dots("P", width: 2, height: 2, pixels: "1023")
-      assert_includes @layout.dots_file("P").contents, "10_0D23_0D"
+      assert_includes @layout.dots_file("P").contents, "10\r23\r"
     end
 
     def test_delete_removes_a_file_and_can_drop_the_configuration_entirely

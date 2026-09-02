@@ -138,7 +138,7 @@ module SerialApi
     def test_image_dry_run_returns_expected_dots_bytes
       body = json_post("/image", label: "P", width: 3, height: 2, pixels: "123000", dry_run: true)
       assert_equal 200, last_response.status
-      assert_includes body["bytes_hex"].join, AlphaSign::Packet.new("IP0203123_0D000_0D").to_hex
+      assert_includes body["bytes_hex"].join, AlphaSign::Packet.new("IP0203123\r000\r").to_hex
       assert_in_delta 0.5, body["lit_fraction"]
     end
 

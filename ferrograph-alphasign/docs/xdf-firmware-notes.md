@@ -327,9 +327,13 @@ open-source Alpha-protocol packet generator,
 `xml/alphasign.xsl`. Confidence is reasonably good - its Run Time Table
 special values (`always`→`0xFF`, `never`→`0xFE`, `all day`→`0xFD`)
 independently match what XDF's own manual documents for the same field
-elsewhere - but this is still a lower-confidence corner of this library
-than the rest of it. Test with a small image before trusting it for
-anything that matters.
+elsewhere - and the colour-depth codes, the pixel colour codes and the
+rows-and-columns dimensions are all restated in XDF's own manual (§13).
+The row terminator was the one part neither source pinned down, and it was
+wrong until a real sign showed it (see "Writing pixel data"). Treat what
+remains - chiefly the field order within a memory-configuration entry - as
+lower-confidence than the rest of this library, and test with a small
+image before trusting it for anything that matters.
 
 ### Defining a Dots file: Memory Configuration
 
@@ -380,10 +384,25 @@ data updates its contents:
 ```
 
 Each row is `width` single-character pixel codes (see below), followed by
-a literal CR (0x0D) marking the row's end - sent as the 3-byte escape
-`"_0D"` (three literal ASCII characters: `_`, `0`, `D`) rather than a raw
-0x0D byte, because a raw 0x0D is the New Line control code (Appendix A)
-and would be misinterpreted as one if sent literally inside message data.
+a raw CR byte (0x0D) marking the row's end. The manual's storage
+accounting corroborates one delimiter per row: a colour file costs
+"picture area / 4, plus one byte per row, plus 13 byte overhead".
+
+**This was wrong for a while, and the sign said so.** The terminator was
+`"_0D"` - the 3-byte format's escape for a literal 0x0D - on the reasoning
+that a raw 0x0D would otherwise be read as the New Line control code
+(Appendix A). But `AlphaSign::Packet` frames everything with SOH = 0x01,
+which selects the **1-byte** protocol format, and §1 of the manual is
+explicit that "the 1 byte and 2/3 byte formats should not be mixed within
+a single message frame": the format is chosen by the SOH code (`01H`
+1-byte, `5DH 21H` 2-byte, `5FH 30H 31H` 3-byte). Inside a 1-byte frame
+`_` (0x5F) is just an underscore, not an escape introducer.
+
+The failure was diagnostic: a picture displayed as its **top row alone**.
+The sign parsed the header and the first row's pixels correctly, then met
+a character that isn't a colour code (`0`-`8`) and stopped - which also
+tells us the pixel data starts immediately after the header, with no
+leading CR.
 
 Per-pixel colour codes (bare digits, no `0x1C` prefix - contrast with text
 colours):
