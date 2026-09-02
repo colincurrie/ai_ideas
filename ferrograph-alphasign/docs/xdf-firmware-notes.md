@@ -106,10 +106,20 @@ XDF supports the Alpha read-back conventions (Read Text/String/Dots,
 Read Memory Configuration, Read Serial Error Status, etc.) on both RS232
 and RS422, auto-selecting whichever port it last received on. Responses
 always use `0` for both device type and address in the header, and always
-include a checksum, regardless of how the request arrived. **Not used by
-this repo** - `serial_api` tracks "what we've sent" in memory rather than
-reading the sign's actual state back (see the root README's note on this
-under "Known limitations"). If that's ever built, look at:
+include a checksum, regardless of how the request arrived (the checksum
+is the 16-bit sum of every byte from `<STX>` to `<ETX>` inclusive, as 4
+ASCII hex digits - `AlphaSign::Response` verifies it).
+
+**The transport for this is built** - `SerialConnection#transact`,
+`AlphaSign::Response`, `serial_api`'s `/sign/*` and `/read` endpoints, and
+`bin/alphasign read`. What is *not* built is parsing a reply back into
+`SerialApi::Layout`, and that's a deliberate hold: the request formats for
+reads come from Alpha's protocol manual rather than XDF's own, which is
+the same provenance that had the dots row terminator wrong (see "Writing
+pixel data"). A parser written against a simulator would just encode the
+same assumption twice. It should be written against a real reply.
+
+Useful specifics for whoever does that:
 - Special Function `0x22` (Read General Information) and `0x25` (Dump
   Memory, the only nested/multi-packet response XDF sends) for whole-sign
   state.
@@ -119,7 +129,26 @@ under "Known limitations"). If that's ever built, look at:
 - Unsupported read requests get a response with a literal
   `*** NOT SUPPORTED ***` body rather than being silently dropped, except
   the Network Query command (`0x2D`), which XDF ignores outright (it needs
-  timing behavior XDF's buffered serial can't guarantee).
+  timing behavior XDF's buffered serial can't guarantee). So a read that
+  gets **no reply at all** most likely means the request itself was
+  malformed - not that the feature is missing.
+- For Read Memory Configuration and Read Run Sequence, XDF repurposes the
+  "Keyboard Protection Status" field (the Aurora has no IR keyboard): a
+  file reads as "Locked" if it has been updated and holds valid data,
+  "Unlocked" otherwise. For the Run Sequence it means a real sequence has
+  been defined rather than the default order.
+- A read for a file that is undefined or never updated comes back with
+  only the label and no content - and for a Dots file, no dimensions
+  either. That's how to tell "empty" from "not there".
+- A Memory Dump can be very large. The manual warns that a big reply "may
+  well be huge, which may tie up foreground execution for a very long
+  time, especially at slower baud rates", and that sending more messages
+  meanwhile risks a receive-buffer overflow and lost messages. So don't
+  interleave writes with a dump.
+- The reported memory sizes are capped at 4 hex digits, so a sign with
+  100K-220K fitted reports `FFFF` for total memory and `FFF` for free
+  space above 64K. XDF's own Memory Summary command (special function
+  sub-command `0x4D`) gives real figures.
 
 ## Serial buffer protection / practical sending advice
 

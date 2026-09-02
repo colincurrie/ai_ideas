@@ -27,6 +27,12 @@ module SerialApi
     # Configuration; give it a moment before the content writes land.
     RECONFIGURE_PAUSE = 1
 
+    # How long to wait for a reply before giving up. A dump of a full
+    # memory at 9600 baud is the slow case; a "that file is empty" reply
+    # comes back in milliseconds.
+    DEFAULT_READ_TIMEOUT = 5
+    MAX_READ_TIMEOUT = 120
+
     configure do
       set :show_exceptions, false
       set :raise_errors, false
@@ -135,6 +141,31 @@ module SerialApi
         settings.last_error = nil
         settings.layout.mark_configured! if reconfiguring
         response.to_json
+      end
+
+      # Sends a read request and returns what came back, raw bytes first.
+      def read_back(packet, timeout: nil)
+        seconds = timeout.nil? ? DEFAULT_READ_TIMEOUT : Float(timeout)
+        halt 400, { ok: false, error: "timeout must be between 0 and #{MAX_READ_TIMEOUT}" }.to_json unless seconds.positive? && seconds <= MAX_READ_TIMEOUT
+
+        response = settings.conn_mutex.synchronize do
+          settings.connection.transact(packet, timeout: seconds)
+        end
+        settings.last_error = nil
+        {
+          ok: true,
+          request_bytes_hex: packet.to_hex,
+          timeout: seconds,
+          # An empty reply is the single most likely outcome if the request
+          # format is wrong, and it looks identical to a disconnected sign -
+          # so say which this was rather than returning a bare empty string.
+          replied: !response.empty?
+        }.merge(response.to_h).to_json
+      rescue ArgumentError, TypeError
+        halt 400, { ok: false, error: "timeout must be a number" }.to_json
+      rescue StandardError, LoadError => e
+        settings.last_error = e.message
+        halt 502, { ok: false, error: e.message }.to_json
       end
 
       # For the packets that sit outside the file system entirely (the
@@ -304,6 +335,66 @@ module SerialApi
       text_file = AlphaSign::TextFile.new("", priority: true)
       send_standalone(text_file.to_packet(type: packet_type, address: packet_address),
                       dry_run: truthy?(params[:dry_run]))
+    end
+
+    # --- Reading back from the sign ---
+    #
+    # XDF answers Read requests for the memory configuration, the run time
+    # table, and every Text/String/Dots file, plus a whole-memory dump
+    # (manual §5 and Appendix B). This service has only ever written, so
+    # these endpoints are the way in - and they hand back the raw bytes
+    # alongside any interpretation, because the request format for reads
+    # comes from Alpha's manual rather than XDF's, and that's exactly the
+    # provenance that produced a wrong dots row terminator. Trust the hex.
+    post "/read" do
+      body = json_body
+      command_code = body[:command_code]
+      halt 400, { ok: false, error: "command_code is required" }.to_json if command_code.nil? || command_code.to_s.empty?
+
+      read_back(AlphaSign::Packet.new(
+        "#{command_code}#{body[:data]}",
+        type: body[:type] || Config.type,
+        address: body[:address] || Config.address
+      ), timeout: body[:timeout])
+    end
+
+    # Read Special Function 0x24 - what files the sign believes it has.
+    get "/sign/memory_config" do
+      read_back(AlphaSign::Packet.new(
+        "#{AlphaSign::Protocol::READ_SPECIAL}#{AlphaSign::Protocol::MEMORY_CONFIG}",
+        type: packet_type, address: packet_address
+      ), timeout: params[:timeout])
+    end
+
+    # Read Special Function 0x25 - every file that has been defined and
+    # updated. Potentially large and slow: the manual warns a dump "may
+    # well be huge", so it gets a longer default timeout.
+    get "/sign/dump" do
+      read_back(AlphaSign::Packet.new(
+        "#{AlphaSign::Protocol::READ_SPECIAL}%",
+        type: packet_type, address: packet_address
+      ), timeout: params[:timeout] || 30)
+    end
+
+    get "/sign/text/:label" do
+      read_back(AlphaSign::Packet.new(
+        "#{AlphaSign::Protocol::READ_TEXT}#{valid_label!(params[:label])}",
+        type: packet_type, address: packet_address
+      ), timeout: params[:timeout])
+    end
+
+    get "/sign/string/:label" do
+      read_back(AlphaSign::Packet.new(
+        "#{AlphaSign::Protocol::READ_STRING}#{valid_label!(params[:label])}",
+        type: packet_type, address: packet_address
+      ), timeout: params[:timeout])
+    end
+
+    get "/sign/image/:label" do
+      read_back(AlphaSign::Packet.new(
+        "#{AlphaSign::Protocol::READ_SMALL_DOTS}#{valid_label!(params[:label])}",
+        type: packet_type, address: packet_address
+      ), timeout: params[:timeout])
     end
 
     post "/raw" do

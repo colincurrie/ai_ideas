@@ -148,6 +148,10 @@ Endpoints (all JSON):
 | POST | `/priority` | same shape as `/messages`, targets the Priority Text File |
 | DELETE | `/priority` | clear the priority override |
 | POST | `/raw` | `{command_code, data, type, address, dry_run}` - escape hatch for anything not wrapped above |
+| GET | `/sign/memory_config` | ask the sign what files it holds (Read Special Function 0x24) |
+| GET | `/sign/dump` | ask for every defined file (Memory Dump, 0x25) - slow, 30s default timeout |
+| GET | `/sign/text/:label`, `/sign/string/:label`, `/sign/image/:label` | read one file back |
+| POST | `/read` | `{command_code, data, timeout}` - send any read request and see the reply |
 
 ### The three file types
 
@@ -357,10 +361,12 @@ in this repo's history were actually found.
 ## Known limitations / roadmap
 
 - **`GET /files` reflects what this server has sent, not the sign's
-  actual state** - there's no read-back sync. XDF does support reading a
-  Text file's current content/status back (see
-  `docs/xdf-firmware-notes.md`, "Serial readback"); worth adding if
-  server restarts or multiple clients start making the difference matter.
+  actual state.** Restart `serial_api` and it forgets every file, while
+  the sign carries on displaying them. The `/sign/*` endpoints above can
+  now *ask* the sign what it holds, and the transport for that is working
+  and tested - but nothing yet parses the replies back into the layout, so
+  there's still no sync and no load-on-startup. See "Reading back from the
+  sign" below for why that step is waiting on evidence.
 - **No checksum on outgoing packets.** Valid, simpler protocol form, but
   means a corrupted send isn't caught by the sign - see
   `docs/xdf-firmware-notes.md`, "Checksum processing" for what's at stake.
@@ -385,6 +391,40 @@ in this repo's history were actually found.
   fallback shown if the sign stops hearing from this app), beeper and
   aux-port/IO control, and live time/date display codes. All reachable
   today via the `raw` command/endpoint in the meantime.
+
+## Reading back from the sign
+
+XDF answers read requests for the memory configuration, the run time
+table, every Text/String/Dots file, and a whole-memory dump (its manual
+§5 and Appendix B, which marks 0x24 Memory Config as Write/**Read** and
+0x25 Memory Dump as Read). Replies come back framed in the same low-level
+format as the request, with ASCII `0` for both the device identifier and
+the address, and always with a checksum - which
+`AlphaSign::Response` verifies.
+
+The transport is done and tested: `SerialConnection#transact` writes a
+request and reads until `<EOT>` or a timeout, the endpoints above expose
+it, and `bin/alphasign read` does it from a terminal:
+
+```
+alphasign read -d /dev/ttyUSB0 config
+alphasign read -d /dev/ttyUSB0 image Q
+alphasign read -d /dev/ttyUSB0 --timeout 30 dump
+```
+
+Each returns the reply as raw hex as well as a parse, and the web app's
+"Advanced" section has the same thing.
+
+**What's deliberately not built yet: turning those replies into state.**
+The *request* formats for reads come from Alpha's protocol manual rather
+than XDF's own, and that's precisely the provenance that had this library
+sending a wrong dots row terminator for weeks - a bug no amount of local
+testing found, because the test fixtures encoded the same assumption as
+the code. Parsing a reply into `Layout` (and so loading state on startup,
+or into the web form) is worth doing, but it should be written against
+what a real sign actually answers, not against a simulator that agrees
+with the guess. Run the commands above against yours and the replies will
+settle it.
 
 ## Protocol references
 

@@ -12,6 +12,7 @@ module AlphaSign
       when "send" then cmd_send(argv)
       when "clear" then cmd_clear(argv)
       when "raw" then cmd_raw(argv)
+      when "read" then cmd_read(argv)
       when "list-modes" then list(Modes::NAMES)
       when "list-colors" then list(Colors::NAMES)
       when "list-positions" then list(Positions::NAMES)
@@ -145,6 +146,67 @@ module AlphaSign
       names.keys.sort.each { |name| puts name }
     end
 
+    # Sends a Read request and prints whatever the sign says back, raw
+    # bytes included. The request formats for reads come from Alpha's
+    # protocol manual rather than XDF's, so the hex is the point: it's the
+    # evidence for what the sign actually replies, as against what this
+    # library assumes it will.
+    def cmd_read(argv)
+      opts = default_options
+      timeout = 5
+      parser = OptionParser.new do |p|
+        p.banner = "Usage: alphasign read [options] WHAT [LABEL]\n" \
+                   "  WHAT is one of: config, dump, text, string, image, or a raw\n" \
+                   "  command code. text/string/image take a single-character LABEL.\n" \
+                   "  Prints the reply as hex and as printable text."
+        p.on("--timeout SECONDS", Float, "How long to wait for a reply (default 5)") { |v| timeout = v }
+        common_options(p, opts)
+      end
+      parser.parse!(argv)
+
+      what, label = argv
+      contents = read_request_for(what, label)
+      if contents.nil?
+        warn parser.help
+        exit 1
+      end
+
+      packet = Packet.new(contents, type: opts[:type], address: opts[:address])
+      if opts[:dry_run]
+        puts packet.to_hex
+        return
+      end
+
+      connection = SerialConnection.new(
+        device: opts[:device], baud: opts[:baud], parity: opts[:parity],
+        data_bits: opts[:data_bits], stop_bits: opts[:stop_bits]
+      )
+      response = connection.transact(packet, timeout: timeout)
+      connection.close
+
+      puts "request:  #{packet.to_hex}"
+      if response.empty?
+        puts "reply:    (nothing - the sign didn't answer within #{timeout}s)"
+        exit 1
+      end
+      puts "reply:    #{response.to_hex}"
+      puts "printable: #{response.to_printable}"
+      puts "contents: #{response.contents.inspect}" if response.contents
+      puts "checksum: #{response.checksum} (computed #{response.computed_checksum}, #{response.checksum_ok? ? 'ok' : 'MISMATCH'})" if response.checksum
+    end
+
+    def read_request_for(what, label)
+      case what
+      when "config" then "#{Protocol::READ_SPECIAL}#{Protocol::MEMORY_CONFIG}"
+      when "dump" then "#{Protocol::READ_SPECIAL}%"
+      when "text" then label && "#{Protocol::READ_TEXT}#{label}"
+      when "string" then label && "#{Protocol::READ_STRING}#{label}"
+      when "image" then label && "#{Protocol::READ_SMALL_DOTS}#{label}"
+      when nil, "" then nil
+      else "#{what}#{label}"
+      end
+    end
+
     def print_help
       puts <<~HELP
         alphasign - send messages to Alpha-protocol LED signs
@@ -154,6 +216,7 @@ module AlphaSign
           alphasign send [options] MESSAGE
           alphasign clear [options]
           alphasign raw [options] COMMAND_CODE [DATA]
+          alphasign read [options] WHAT [LABEL]
           alphasign list-modes
           alphasign list-colors
           alphasign list-positions
@@ -166,6 +229,8 @@ module AlphaSign
           alphasign send -d /dev/ttyUSB0 -f large_standard "BIG TEXT"
           alphasign send -d /dev/ttyUSB0 --dry-run "test message"
           alphasign clear -d /dev/ttyUSB0
+          alphasign read -d /dev/ttyUSB0 config
+          alphasign read -d /dev/ttyUSB0 image Q
 
         Run `alphasign send --help` for the full list of message options.
       HELP

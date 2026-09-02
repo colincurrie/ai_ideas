@@ -163,6 +163,53 @@ module WebApp
       assert_equal [[:delete, "/image/P?dry_run=true"]], @fake_client.calls
     end
 
+    def test_api_sign_memory_config_proxies
+      login!
+      get "/api/sign/memory_config"
+      assert_equal [[:get, "/sign/memory_config"]], @fake_client.calls
+    end
+
+    def test_api_sign_forwards_a_timeout
+      login!
+      get "/api/sign/dump?timeout=30"
+      assert_equal [[:get, "/sign/dump?timeout=30"]], @fake_client.calls
+    end
+
+    def test_api_sign_file_read_proxies_with_its_label
+      login!
+      get "/api/sign/image/Q"
+      assert_equal [[:get, "/sign/image/Q"]], @fake_client.calls
+    end
+
+    def test_api_sign_rejects_an_unknown_read
+      login!
+      get "/api/sign/everything"
+      assert_equal 400, last_response.status
+      assert_empty @fake_client.calls
+    end
+
+    def test_api_sign_rejects_an_unknown_file_kind
+      login!
+      get "/api/sign/beeper/A"
+      assert_equal 400, last_response.status
+      assert_empty @fake_client.calls
+    end
+
+    def test_api_sign_validates_the_label
+      login!
+      get "/api/sign/text/!!"
+      assert_equal 400, last_response.status
+      assert_empty @fake_client.calls
+    end
+
+    def test_api_read_forwards_parsed_body
+      login!
+      post "/api/read", { command_code: "F", data: "$" }.to_json, "CONTENT_TYPE" => "application/json"
+      call = @fake_client.calls.first
+      assert_equal [:post, "/read"], call[0, 2]
+      assert_equal "F", call[2][:command_code]
+    end
+
     def test_boot_fails_clearly_on_a_malformed_password_hash
       # Regression test: bin/hash_password used to leak its "Password to
       # hash: " prompt into stdout, so `WEB_APP_PASSWORD_HASH=$(bin/hash_password)`

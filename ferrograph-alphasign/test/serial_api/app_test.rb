@@ -14,6 +14,14 @@ module SerialApi
     def write(_packet)
       raise @error
     end
+
+    def transact(_packet, timeout: 5)
+      raise @error
+    end
+
+    def connected?
+      false
+    end
   end
 
   # Records what was written instead of touching hardware, so tests can
@@ -31,6 +39,17 @@ module SerialApi
 
     def connected?
       true
+    end
+
+    # Read-back: hands out whatever was queued, so a test can decide what
+    # the "sign" says - including saying nothing at all.
+    attr_accessor :reply
+    attr_reader :reads
+
+    def transact(packet, timeout: 5)
+      @reads ||= []
+      @reads << [packet.to_s, timeout]
+      AlphaSign::Response.new(@reply.to_s)
     end
   end
 
@@ -230,6 +249,97 @@ module SerialApi
       assert_match(/^00 00 00 00 00 01/, body["bytes_hex"])
       get "/files"
       assert_empty JSON.parse(last_response.body)["text"]
+    end
+
+    # --- reading back from the sign ---
+
+    def framed(contents)
+      body = "\x02#{contents}\x03"
+      "\x00\x00\x00\x00\x00\x01000#{body}#{format('%04X', body.bytes.sum & 0xFFFF)}\x04"
+    end
+
+    def test_reading_the_memory_config_sends_read_special_function
+      @recorder.reply = framed("E$AAU0100FFFF")
+      get "/sign/memory_config"
+      assert_equal 200, last_response.status
+      body = JSON.parse(last_response.body)
+      assert_equal AlphaSign::Packet.new("F$").to_hex, body["request_bytes_hex"]
+      assert_equal "E$AAU0100FFFF", body["contents_printable"]
+      assert_equal true, body["checksum_ok"]
+    end
+
+    def test_reading_a_file_uses_the_matching_read_command_code
+      @recorder.reply = framed("AAHI")
+      get "/sign/text/A"
+      assert_equal AlphaSign::Packet.new("BA").to_hex, JSON.parse(last_response.body)["request_bytes_hex"]
+
+      get "/sign/string/1"
+      assert_equal AlphaSign::Packet.new("H1").to_hex, JSON.parse(last_response.body)["request_bytes_hex"]
+
+      get "/sign/image/Q"
+      assert_equal AlphaSign::Packet.new("JQ").to_hex, JSON.parse(last_response.body)["request_bytes_hex"]
+    end
+
+    # A sign that ignores the request looks exactly like a disconnected one
+    # unless the response says which happened.
+    def test_silence_is_reported_as_a_reply_that_did_not_come
+      @recorder.reply = ""
+      get "/sign/memory_config"
+      assert_equal 200, last_response.status
+      body = JSON.parse(last_response.body)
+      assert_equal false, body["replied"]
+      assert_equal false, body["complete"]
+      assert_equal "", body["raw_hex"]
+    end
+
+    # The request format for reads comes from Alpha's manual, not XDF's, so
+    # an unparseable reply is likelier to mean we asked wrongly than that
+    # the sign misbehaved - the bytes have to come back either way.
+    def test_an_unparseable_reply_still_returns_the_raw_bytes
+      @recorder.reply = "\xFF\xFE garbage"
+      get "/sign/memory_config"
+      assert_equal 200, last_response.status
+      body = JSON.parse(last_response.body)
+      assert_equal false, body["complete"]
+      assert_includes body["raw_hex"], "FF FE"
+    end
+
+    def test_read_probe_accepts_an_arbitrary_command_code
+      @recorder.reply = framed("XY")
+      body = json_post("/read", command_code: "F", data: "%")
+      assert_equal AlphaSign::Packet.new("F%").to_hex, body["request_bytes_hex"]
+    end
+
+    def test_read_requires_a_command_code
+      json_post("/read", data: "$")
+      assert_equal 400, last_response.status
+    end
+
+    def test_read_rejects_an_out_of_range_timeout
+      json_post("/read", command_code: "F", data: "$", timeout: 9999)
+      assert_equal 400, last_response.status
+      assert_match(/timeout/, JSON.parse(last_response.body)["error"])
+    end
+
+    def test_read_rejects_a_non_numeric_timeout
+      json_post("/read", command_code: "F", data: "$", timeout: "soon")
+      assert_equal 400, last_response.status
+    end
+
+    def test_dump_gets_a_longer_default_timeout_than_a_single_file
+      @recorder.reply = framed("E$")
+      get "/sign/dump"
+      assert_equal 30.0, JSON.parse(last_response.body)["timeout"]
+
+      get "/sign/memory_config"
+      assert_equal 5.0, JSON.parse(last_response.body)["timeout"].to_f
+    end
+
+    def test_read_failure_surfaces_as_502
+      App.set :connection, FailingConnection.new(LoadError.new("the 'serialport' gem is required"))
+      get "/sign/memory_config"
+      assert_equal 502, last_response.status
+      assert_match(/serialport/, JSON.parse(last_response.body)["error"])
     end
 
     def test_raw_requires_command_code

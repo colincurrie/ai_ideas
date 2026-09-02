@@ -956,6 +956,63 @@ document.getElementById("image-preview-btn").addEventListener("click", () => sen
 document.getElementById("image-send-btn").addEventListener("click", () => sendImage(false));
 document.getElementById("image-force-btn").addEventListener("click", () => sendImage(false, true));
 
+// --- Reading back from the sign ---
+
+function readLabelNeeded() {
+  return ["text", "string", "image"].includes(document.getElementById("read-what").value);
+}
+
+function syncReadLabel() {
+  document.getElementById("read-label").disabled = !readLabelNeeded();
+}
+
+document.getElementById("read-what").addEventListener("change", syncReadLabel);
+
+async function readFromSign() {
+  const what = document.getElementById("read-what").value;
+  const label = document.getElementById("read-label").value.trim();
+  const errorEl = document.getElementById("read-error");
+  const out = document.getElementById("read-output");
+  errorEl.textContent = "";
+
+  if (readLabelNeeded() && !label) {
+    errorEl.textContent = "Which file? Enter its label.";
+    return;
+  }
+
+  const path = readLabelNeeded()
+    ? `/api/sign/${what}/${encodeURIComponent(label)}`
+    : `/api/sign/${what}`;
+
+  out.hidden = false;
+  out.textContent = "Waiting for the sign…"; // a dump can take a while at 9600 baud
+  const { ok, body } = await fetchJSON(path);
+  if (!ok) {
+    out.hidden = true;
+    errorEl.textContent = body.error || "Request failed";
+    return;
+  }
+
+  const lines = [`request:   ${body.request_bytes_hex}`];
+  if (!body.replied) {
+    // Silence and a dead link look identical unless we say which happened.
+    lines.push(`reply:     nothing - the sign didn't answer within ${body.timeout}s.`,
+               "",
+               "That usually means the request format isn't one this sign accepts,",
+               "rather than that the sign is unreachable - writing still works.");
+  } else {
+    lines.push(`reply:     ${body.raw_hex}`, `printable: ${body.printable}`);
+    if (body.contents_printable) lines.push(`contents:  ${body.contents_printable}`);
+    if (body.checksum) {
+      lines.push(`checksum:  ${body.checksum} (computed ${body.computed_checksum}, ${body.checksum_ok ? "ok" : "MISMATCH"})`);
+    }
+    if (!body.complete) lines.push("", "Note: this doesn't parse as a complete reply frame.");
+  }
+  out.textContent = lines.join("\n");
+}
+
+document.getElementById("read-btn").addEventListener("click", readFromSign);
+
 // --- Init ---
 
 (async function init() {
@@ -963,5 +1020,6 @@ document.getElementById("image-force-btn").addEventListener("click", () => sendI
   await refreshStatus();
   await refreshMessages();
   applySourceMode(); // lays out the image card and puts a blank grid up to draw on
+  syncReadLabel();
   setInterval(refreshStatus, 15000);
 })();

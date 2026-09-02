@@ -332,6 +332,30 @@
       <button type="button" id="raw-send-btn" class="primary">Send</button>
     </div>
     <pre class="bytes" id="raw-bytes-preview" hidden></pre>
+
+    <label style="margin-top:1.25rem;">Read back from the sign</label>
+    <p class="muted">Asks the sign what it currently holds. The reply is shown raw, because the request format for reads comes from Alpha's protocol manual rather than XDF's own - so what your sign actually answers is the evidence, and worth seeing before anything is built on top of it.</p>
+    <div class="row">
+      <div>
+        <label for="read-what">Read</label>
+        <select id="read-what">
+          <option value="memory_config">Memory configuration</option>
+          <option value="dump">Whole memory dump</option>
+          <option value="text">Text file</option>
+          <option value="string">String file</option>
+          <option value="image">Image file</option>
+        </select>
+      </div>
+      <div>
+        <label for="read-label">Label</label>
+        <input type="text" id="read-label" maxlength="1" size="2" placeholder="A">
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" id="read-btn" class="primary">Read from sign</button>
+    </div>
+    <div class="error-msg" id="read-error"></div>
+    <pre class="bytes" id="read-output" hidden></pre>
   </details>
 </div>
 <script src="/pixel_grid.js"></script>

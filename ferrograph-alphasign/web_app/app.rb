@@ -92,6 +92,10 @@ module WebApp
         label
       end
 
+      def timeout_query
+        params[:timeout] ? "?timeout=#{URI.encode_www_form_component(params[:timeout])}" : ""
+      end
+
       def dry_run_query
         params[:dry_run] ? "?dry_run=#{URI.encode_www_form_component(params[:dry_run])}" : ""
       end
@@ -178,6 +182,26 @@ module WebApp
 
     post "/api/image" do
       proxy(:post, "/image", parsed_body)
+    end
+
+    # Reading back from the sign. Diagnostic for now: these return the raw
+    # reply bytes, because the request formats for reads come from Alpha's
+    # protocol manual rather than XDF's own, so what the sign actually
+    # answers is worth seeing before anything is built on top of it.
+    get "/api/sign/:what" do
+      what = params[:what]
+      halt 400, { ok: false, error: "unknown read #{what.inspect}" }.to_json unless %w[memory_config dump].include?(what)
+      proxy(:get, "/sign/#{what}#{timeout_query}")
+    end
+
+    get "/api/sign/:kind/:label" do
+      kind = params[:kind]
+      halt 400, { ok: false, error: "unknown file kind #{kind.inspect}" }.to_json unless %w[text string image].include?(kind)
+      proxy(:get, "/sign/#{kind}/#{valid_label!(params[:label])}#{timeout_query}")
+    end
+
+    post "/api/read" do
+      proxy(:post, "/read", parsed_body)
     end
   end
 end
