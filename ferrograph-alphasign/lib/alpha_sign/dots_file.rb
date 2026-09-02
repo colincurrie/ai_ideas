@@ -11,8 +11,10 @@ module AlphaSign
   # cross-checked against the XDF manual's colour-depth/dimension notes and
   # its Run-Time-Table special values (which independently matched this
   # source's time-lookup table exactly - real->real->always->0xFF,
-  # never->0xFE, all day->0xFD - giving good confidence). Still, verify
-  # with a small test image before relying on this for anything important.
+  # never->0xFE, all day->0xFD - giving good confidence). Every field has
+  # since been confirmed against either the XDF manual or the sign itself:
+  # the row terminator below, and the height/width order, which a 54x16
+  # picture settled (a square one proves nothing here).
   class DotsFile
     MAX_HEIGHT = 32  # protocol limit
     MAX_WIDTH = 255  # protocol limit

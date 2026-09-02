@@ -371,12 +371,14 @@ in this repo's history were actually found.
   images. It would need a real Ruby image-decoding dependency (the web app
   avoids one entirely by doing resize/dither in the browser); happy to add
   if wanted.
-- **Dots Picture/Memory Configuration protocol is lower-confidence than
-  the rest of this library** - reconstructed from a third-party source
-  rather than the official Alpha manual (which wasn't reachable to verify
-  directly). See `docs/xdf-firmware-notes.md`'s "Dots Picture files and
-  Memory Configuration" section for specifics; test with a small image
-  before trusting it for anything that matters.
+- **Dots Picture/Memory Configuration protocol was reconstructed from a
+  third-party source** rather than the official Alpha manual (which wasn't
+  reachable to verify directly). Every field has since been checked
+  against either XDF's own manual or the sign itself - including the row
+  terminator, which was wrong until a real sign showed it, and the
+  height/width order, confirmed by a 54x16 picture. See
+  `docs/xdf-firmware-notes.md`'s "Dots Picture files and Memory
+  Configuration" section for the details.
 - Not yet wrapped in the API, though the protocol supports all of them
   (see `docs/xdf-firmware-notes.md`): run-time/day scheduling (show a
   message only during certain hours/days), the Timeout Message (a

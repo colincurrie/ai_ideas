@@ -330,10 +330,19 @@ independently match what XDF's own manual documents for the same field
 elsewhere - and the colour-depth codes, the pixel colour codes and the
 rows-and-columns dimensions are all restated in XDF's own manual (§13).
 The row terminator was the one part neither source pinned down, and it was
-wrong until a real sign showed it (see "Writing pixel data"). Treat what
-remains - chiefly the field order within a memory-configuration entry - as
-lower-confidence than the rest of this library, and test with a small
-image before trusting it for anything that matters.
+wrong until a real sign showed it (see "Writing pixel data").
+
+**The height/width field order is now confirmed on hardware too**, by a
+54x16 picture displaying correctly. A square test image can't tell you
+anything here, but that one settles it in both places the dimensions
+appear (the memory-configuration entry and the `I` write header), and it
+rules out a *consistent* swap as well as a partial one: 54 exceeds the
+32-row protocol maximum, so had width been going into the height field the
+sign would have rejected the file rather than drawn it.
+
+With that, every field in this section has been checked against either the
+XDF manual or the sign itself. Still worth testing a new corner of it with
+a small picture first, but it's no longer the weak spot of this library.
 
 ### Defining a Dots file: Memory Configuration
 
