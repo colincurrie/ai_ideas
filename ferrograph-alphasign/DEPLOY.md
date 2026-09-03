@@ -18,11 +18,60 @@ sudo apt install ruby-full build-essential ruby-dev libudev-dev
 `libudev-dev` (or `libudev1`/`libudev0` depending on your Raspberry Pi OS
 version) is needed to build the `serialport` gem's native extension.
 
-Clone this repo onto the Pi, then from `ferrograph-alphasign/`:
+## 1b. Getting the code onto the Pi
+
+**If the repository is public, clone over HTTPS and skip the key business
+entirely:**
+
+```
+git clone https://github.com/colincurrie/ai_ideas.git
+```
+
+`git clone git@github.com:...` uses SSH, which needs a key GitHub knows
+about - hence `Permission denied (publickey)` on a fresh Pi. HTTPS needs
+nothing for a public repo.
+
+**If it's private**, the Pi needs a credential. An SSH deploy key is the
+tidy option for a machine that will sit there for years: it's read-only and
+scoped to this one repository, so a compromised Pi can't touch anything
+else in the account.
+
+On the Pi:
+
+```
+ssh-keygen -t ed25519 -C "patchbox-sign" -f ~/.ssh/id_ed25519 -N ""
+cat ~/.ssh/id_ed25519.pub
+```
+
+Copy that one line, then on GitHub go to the **repository** (not your
+account) → Settings → Deploy keys → Add deploy key, paste it, and leave
+"Allow write access" **unchecked** - the Pi only ever needs to pull.
+
+Then:
+
+```
+ssh -T git@github.com          # expect "successfully authenticated"
+git clone git@github.com:colincurrie/ai_ideas.git
+```
+
+An account-wide key (Settings → SSH and GPG keys) works too and is fine if
+the Pi is only ever yours, but it grants the Pi everything you can reach.
+
+Either way, from `ferrograph-alphasign/`:
 
 ```
 bundle install
 ```
+
+### Updating later
+
+```
+cd ~/Documents/ai_ideas && git pull
+sudo systemctl restart ferrograph-serial-api ferrograph-web-app
+```
+
+Restart **both**: `serial_api` keeps the sign's file layout in memory, so a
+half-updated pair will disagree about what the sign is holding.
 
 ## 2. Configuration
 
