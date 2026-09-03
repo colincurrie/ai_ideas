@@ -112,12 +112,57 @@ ASCII hex digits - `AlphaSign::Response` verifies it).
 
 **The transport for this is built** - `SerialConnection#transact`,
 `AlphaSign::Response`, `serial_api`'s `/sign/*` and `/read` endpoints, and
-`bin/alphasign read`. What is *not* built is parsing a reply back into
-`SerialApi::Layout`, and that's a deliberate hold: the request formats for
-reads come from Alpha's protocol manual rather than XDF's own, which is
-the same provenance that had the dots row terminator wrong (see "Writing
-pixel data"). A parser written against a simulator would just encode the
-same assumption twice. It should be written against a real reply.
+`bin/alphasign read`.
+
+### Status: a real sign answers nothing (yet)
+
+Run against an actual Aurora 63 on 4.26, neither request drew a reply:
+
+```
+request:  00 00 00 00 00 01 5A 30 30 02 46 24 04   (F$ - Read Memory Configuration)
+reply:    (nothing - the sign didn't answer within 5s)
+request:  00 00 00 00 00 01 5A 30 30 02 4A 51 04   (JQ - Read Small Dots)
+reply:    (nothing)
+```
+
+The tempting reading is "XDF doesn't support read-back". The manual says
+otherwise, twice over: section 4 is titled *"Support for Serial Readback"*
+and opens "The XDF firmware fully supports serial readback on both RS232
+and RS422"; Appendix B marks `0x24` Memory Config as **Write/Read** and
+`0x25` Memory Dump as **Read**.
+
+What the manual says silence *does* mean is more specific:
+
+> With XDF, unrecognised commands that are still correctly constructed will
+> be ignored and will not result in any error reporting.
+
+So no reply is evidence about the **request**, not proof the feature is
+absent - and it is the expected outcome if the read command codes are
+wrong. Note also that an unsupported *Special Function sub-code* is
+documented to come back as `*** NOT SUPPORTED ***` rather than silence,
+which makes a bogus sub-code a useful probe: a reply proves the return path
+works and that `F` is the right command code.
+
+Two other possibilities are worth ruling out before the protocol:
+
+- **The broadcast address is not the problem.** Section 4 says XDF answers
+  a read request "even if it is configured with the broadcast address (00H)
+  or the original read request packet used the broadcast address". The
+  warning against `00` in readback requests (section 3.2) is about several
+  signs replying at once on an RS422 network, not about being ignored.
+- **The return path might not exist.** Writing to the sign proves only that
+  PC->sign is wired. A cable or adapter with no working receive path
+  behaves exactly like a sign that never answers. `bin/alphasign loopback`
+  settles it in 30 seconds: short DB9 pins 2 and 3 and see whether the
+  pattern comes back.
+
+`bin/alphasign probe` sends five read requests whose replies mean different
+things and reports which the sign answers, which separates "our format is
+wrong" from "nothing can reach us".
+
+Parsing replies into `SerialApi::Layout` stays unbuilt until one arrives.
+A parser written against a simulator would just encode the same assumption
+twice - the mistake that kept the dots row terminator wrong for weeks.
 
 Useful specifics for whoever does that:
 - Special Function `0x22` (Read General Information) and `0x25` (Dump

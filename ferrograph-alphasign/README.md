@@ -443,6 +443,23 @@ alphasign read -d /dev/ttyUSB0 --timeout 30 dump
 Each returns the reply as raw hex as well as a parse, and the web app's
 "Advanced" section has the same thing.
 
+**Status: a real Aurora 63 answers none of these yet.** Both a memory
+configuration read and a file read drew silence. That is *not* proof the
+firmware lacks read-back - the manual devotes a section to it and Appendix
+B marks the functions Read - and silence is exactly what the manual says
+happens to a request the sign doesn't recognise. Two diagnostics narrow it
+down:
+
+```
+alphasign probe -d /dev/ttyUSB0      # which read requests, if any, get answered
+alphasign loopback -d /dev/ttyUSB0   # short DB9 pins 2-3: can this cable receive at all?
+```
+
+The loopback one is worth doing first: writing to the sign proves only that
+PC-to-sign is wired, and a cable with no return path is indistinguishable
+from a sign that never answers. See `docs/xdf-firmware-notes.md`, "Serial
+readback", for the full reasoning.
+
 **What's deliberately not built yet: turning those replies into state.**
 The *request* formats for reads come from Alpha's protocol manual rather
 than XDF's own, and that's precisely the provenance that had this library

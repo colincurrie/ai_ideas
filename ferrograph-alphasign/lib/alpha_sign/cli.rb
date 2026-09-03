@@ -13,6 +13,8 @@ module AlphaSign
       when "clear" then cmd_clear(argv)
       when "raw" then cmd_raw(argv)
       when "read" then cmd_read(argv)
+      when "probe" then cmd_probe(argv)
+      when "loopback" then cmd_loopback(argv)
       when "list-modes" then list(Modes::NAMES)
       when "list-colors" then list(Colors::NAMES)
       when "list-positions" then list(Positions::NAMES)
@@ -207,6 +209,138 @@ module AlphaSign
       end
     end
 
+    # Works out WHY a read request got no answer.
+    #
+    # A real Aurora 63 answered neither "F$" (Read Memory Configuration)
+    # nor "JQ" (Read Small Dots) - just silence. The manual says that is
+    # what happens to a request the sign doesn't recognise: "unrecognised
+    # commands that are still correctly constructed will be ignored and
+    # will not result in any error reporting". So silence is evidence about
+    # the REQUEST, not proof the feature is missing - section 4 is titled
+    # "Support for Serial Readback" and Appendix B marks 0x24 as
+    # Write/Read.
+    #
+    # This sends several read requests whose replies mean different things,
+    # so the answers separate the possibilities.
+    def cmd_probe(argv)
+      opts = default_options
+      timeout = 5
+      parser = OptionParser.new do |p|
+        p.banner = "Usage: alphasign probe [options]\n" \
+                   "  Sends a series of read requests and reports which the sign answers,\n" \
+                   "  to work out whether read-back is unsupported, our request format is\n" \
+                   "  wrong, or the adapter can't receive."
+        p.on("--timeout SECONDS", Float, "How long to wait for each reply (default 5)") { |v| timeout = v }
+        common_options(p, opts)
+      end
+      parser.parse!(argv)
+
+      probes = [
+        ["Read General Information (0x22)", "#{Protocol::READ_SPECIAL}\x22",
+         "Appendix B lists this as Read-only, so it should always answer"],
+        ["Read Special Function, deliberately bogus sub-code", "#{Protocol::READ_SPECIAL}~",
+         "the manual says an unsupported sub-code gets a *** NOT SUPPORTED *** reply"],
+        ["Read Memory Configuration (0x24)", "#{Protocol::READ_SPECIAL}#{Protocol::MEMORY_CONFIG}",
+         "Appendix B marks 0x24 Write/Read"],
+        ["Read Text file A", "#{Protocol::READ_TEXT}A",
+         "section 5 says all Text, String and Dots files can be read back"],
+        ["Read Serial Error Status (0x2A)", "#{Protocol::READ_SPECIAL}*",
+         "Read-only in Appendix B, and short - a good canary"]
+      ]
+
+      connection = SerialConnection.new(
+        device: opts[:device], baud: opts[:baud], parity: opts[:parity],
+        data_bits: opts[:data_bits], stop_bits: opts[:stop_bits]
+      )
+
+      answered = []
+      probes.each do |name, contents, why|
+        packet = Packet.new(contents, type: opts[:type], address: opts[:address])
+        response = connection.transact(packet, timeout: timeout)
+        puts name
+        puts "  why:      #{why}"
+        puts "  request:  #{packet.to_hex}"
+        if response.empty?
+          puts "  reply:    (nothing)"
+        else
+          answered << name
+          puts "  reply:    #{response.to_hex}"
+          puts "  as text:  #{response.to_printable}"
+        end
+        puts
+      end
+      connection.close
+
+      puts "-" * 60
+      if answered.empty?
+        puts "Nothing answered. That means one of:"
+        puts "  1. the read command codes are wrong, so the sign is silently"
+        puts "     ignoring every request (what the manual says it does with"
+        puts "     commands it doesn't recognise), or"
+        puts "  2. nothing the sign sends is reaching this computer."
+        puts
+        puts "Rule out (2) first, and it takes 30 seconds: short pins 2 and 3"
+        puts "together on the DB9 and run"
+        puts "  alphasign loopback -d #{opts[:device]}"
+        puts "If that echoes, the cable can receive and the problem is (1)."
+      else
+        puts "#{answered.size} of #{probes.size} answered, so read-back works and this"
+        puts "sign does support it. The requests that got nothing have the wrong"
+        puts "format - send the replies above and they can be fixed."
+      end
+    end
+
+    # Tests whether anything the sign sends could reach us at all, without
+    # involving the sign: short pins 2 and 3 of the DB9 together and every
+    # byte written comes straight back.
+    #
+    # Worth doing before blaming the protocol. Writing to the sign proves
+    # only that PC->sign is wired; a cable with no return path behaves
+    # exactly like a sign that never answers.
+    def cmd_loopback(argv)
+      opts = default_options
+      parser = OptionParser.new do |p|
+        p.banner = "Usage: alphasign loopback [options]\n" \
+                   "  Short pins 2 and 3 of the DB9 together, then run this. It writes a\n" \
+                   "  known pattern and reports whether it comes back - which tells you\n" \
+                   "  whether the adapter can receive at all."
+        common_options(p, opts)
+      end
+      parser.parse!(argv)
+
+      pattern = "ALPHASIGN LOOPBACK 0123456789"
+      connection = SerialConnection.new(
+        device: opts[:device], baud: opts[:baud], parity: opts[:parity],
+        data_bits: opts[:data_bits], stop_bits: opts[:stop_bits]
+      )
+      # Framed as a packet so the read stops at EOT rather than waiting out
+      # the whole timeout.
+      packet = Packet.new(pattern, type: opts[:type], address: opts[:address])
+      response = connection.transact(packet, timeout: 3)
+      connection.close
+
+      puts "sent:     #{packet.to_hex}"
+      if response.empty?
+        puts "received: (nothing)"
+        puts
+        puts "Either pins 2 and 3 aren't shorted, or this adapter/cable has no"
+        puts "working receive path. Until that echoes, nothing the sign sends"
+        puts "can reach this computer, and no amount of protocol work will help."
+        exit 1
+      end
+
+      puts "received: #{response.to_hex}"
+      if response.raw.include?(pattern)
+        puts
+        puts "The pattern came back: the adapter can receive. So if the sign"
+        puts "still answers nothing, the request format is what's wrong."
+      else
+        puts
+        puts "Something came back, but not what was sent - suspect the baud rate"
+        puts "or wiring rather than the protocol."
+      end
+    end
+
     def print_help
       puts <<~HELP
         alphasign - send messages to Alpha-protocol LED signs
@@ -217,6 +351,8 @@ module AlphaSign
           alphasign clear [options]
           alphasign raw [options] COMMAND_CODE [DATA]
           alphasign read [options] WHAT [LABEL]
+          alphasign probe [options]
+          alphasign loopback [options]
           alphasign list-modes
           alphasign list-colors
           alphasign list-positions
@@ -231,6 +367,8 @@ module AlphaSign
           alphasign clear -d /dev/ttyUSB0
           alphasign read -d /dev/ttyUSB0 config
           alphasign read -d /dev/ttyUSB0 image Q
+          alphasign probe -d /dev/ttyUSB0        # why isn't the sign answering reads?
+          alphasign loopback -d /dev/ttyUSB0     # can this cable receive at all?
 
         Run `alphasign send --help` for the full list of message options.
       HELP
