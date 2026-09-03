@@ -8,6 +8,48 @@ to the sign:
                                     (Tailscale-reachable)                 (127.0.0.1 only)
 ```
 
+## 0. Flashing a fresh card
+
+Do this from your laptop with the spare card; the running Pi is untouched
+until you swap them, so nothing is lost if you change your mind.
+
+**First, check which Pi you have** - it decides which image. On the current
+Pi:
+
+```
+cat /proc/device-tree/model
+```
+
+- Pi 2 / 3 / 4 / 5 / Zero 2 W: 64-bit Raspberry Pi OS.
+- Pi 1 / Zero / Zero W: these are ARMv6 and the 64-bit build won't boot -
+  take the 32-bit image.
+
+**Anything worth rescuing off the old card?** Probably not - the code comes
+from git and the secrets are regenerated below - but if you already made a
+`.env`, copy it somewhere now. Same for any config belonging to whatever
+else the Pi was doing.
+
+**Flash it** with [Raspberry Pi Imager](https://www.raspberrypi.com/software/):
+
+1. Choose the OS. **Raspberry Pi OS Lite** is the right fit here: this is an
+   appliance driving a sign, and you'll reach it over SSH and the web app.
+   Take the full desktop version instead if you want to keep using VNC on
+   it directly.
+2. Before writing, open the settings (the gear icon, or "Edit Settings" when
+   it offers to customise). Set the hostname, username and password, enable
+   SSH, and add your WiFi if it isn't on Ethernet. **Don't skip this** - it
+   is the difference between the Pi appearing on the network by itself and
+   an evening with a keyboard and monitor attached.
+3. Write to the spare card.
+
+Swap the cards, power up, and you should be able to reach it:
+
+```
+ssh <username>@<hostname>.local
+```
+
+Then carry on below.
+
 ## 1. Prerequisites on the Pi
 
 **This needs Ruby 3.0 or newer** (puma and dotenv both require it), which
@@ -114,6 +156,59 @@ sudo systemctl restart ferrograph-serial-api ferrograph-web-app
 Restart **both**: `serial_api` keeps the sign's file layout in memory, so a
 half-updated pair will disagree about what the sign is holding.
 
+## 1c. Letting the Pi talk to the sign
+
+Plug the USB-serial adapter in and find it:
+
+```
+ls -l /dev/ttyUSB*
+```
+
+Expect `/dev/ttyUSB0` - not the `/dev/tty.usbserial-…` name macOS uses.
+
+Note the group in that listing: `dialout`. An ordinary user isn't in it, so
+opening the port fails with `Permission denied @ rb_sysopen -
+/dev/ttyUSB0`, and it fails identically whether you're running the CLI by
+hand or under systemd. Fix it once:
+
+```
+sudo usermod -aG dialout $USER
+```
+
+Then **log out and back in** - group membership only applies to new
+sessions, which is why this often looks like it didn't work. Check with
+`groups`. Whichever user the systemd units run as needs to be in `dialout`
+too.
+
+Confirm the whole path before going further:
+
+```
+bundle exec bin/alphasign send -d /dev/ttyUSB0 "HELLO FROM THE PI"
+```
+
+### Optional: a name that doesn't move
+
+`/dev/ttyUSB0` is assigned in plug order, so a second USB-serial device
+would renumber it. If that ever matters, give the adapter a fixed name.
+Find its identifiers:
+
+```
+udevadm info -a -n /dev/ttyUSB0 | grep -m2 -E "idVendor|idProduct"
+```
+
+Then `/etc/udev/rules.d/99-ferrograph-sign.rules`, with your own values:
+
+```
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", SYMLINK+="ferrograph-sign"
+```
+
+```
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+Now set `SERIAL_DEVICE=/dev/ferrograph-sign` below and it stays correct
+whatever else gets plugged in.
+
 ## 2. Configuration
 
 Both services read configuration from the environment. Generate the two
@@ -204,6 +299,9 @@ Restart=on-failure
 [Install]
 WantedBy=multi-user.target
 ```
+
+`User=` must be a user in the `dialout` group (see 1c) - systemd doesn't
+care that *you* can open the port, only that the service's user can.
 
 Adjust `User=`/`WorkingDirectory=` to match your actual Pi user and clone
 path. Then:
