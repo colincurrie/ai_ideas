@@ -99,7 +99,14 @@ module FakeSign
     end
 
     def frame
-      Renderer.new(@sign).frames.first[:pixels]
+      # The composed canvas, which is at least display-width and may be
+      # wider; the effect decides which part is on screen at a given
+      # moment (see test/fake_sign/animate_test.js).
+      Renderer.new(@sign).frames.first[:canvas][:pixels]
+    end
+
+    def first_frame
+      Renderer.new(@sign).frames.first
     end
 
     def lit(pixels)
@@ -151,11 +158,57 @@ module FakeSign
       assert_equal 15, bottom_rows.max
     end
 
-    def test_the_frame_is_the_size_of_the_display
+    def test_the_canvas_is_at_least_the_size_of_the_display
       send!("AA\x1B\x20bHI")
       pixels = frame
       assert_equal 16, pixels.size
-      assert_equal 135, pixels.first.size
+      assert_operator pixels.first.size, :>=, 135
+    end
+
+    # A long message composes wider than the display, which is what gives a
+    # Rotate something to travel.
+    def test_a_long_message_composes_wider_than_the_display
+      send!("AA\x1B\x20a" + ("SCROLLING NEWS " * 3))
+      assert_operator first_frame[:canvas][:width], :>, 135
+    end
+
+    # Appendix C: the effect code decides the motion.
+    def test_the_effect_code_becomes_a_motion
+      send!("AA\x1B\x20aHI")
+      assert_equal :rotate, first_frame[:motion]
+
+      send!("AA\x1B\x20cHI")
+      assert_equal :flash, first_frame[:motion]
+
+      send!("AA\x1B\x20n0HI")
+      assert_equal :twinkle, first_frame[:motion]
+      assert first_frame[:approximated], "twinkle is an impression, and says so"
+    end
+
+    # Section 26: the speed code sets the pause between frames, and the
+    # manual gives the figures outright.
+    def test_the_speed_code_sets_the_pause
+      send!("AA\x1B\x20b\x15SLOW")
+      assert_in_delta 17.0, first_frame[:pause]
+
+      send!("AA\x1B\x20b\x19FAST")
+      assert_in_delta 1.0, first_frame[:pause]
+
+      send!("AA\x1B\x20bDEFAULT")
+      assert_in_delta 4.5, first_frame[:pause], 0.001, "Speed 3 is the sign's default"
+    end
+
+    def test_no_hold_uses_the_minimal_pause
+      send!("AA\x1B\x20b\x09QUICK")
+      assert_in_delta Timings::NO_HOLD_SECONDS, first_frame[:pause]
+    end
+
+    # The half-speed effects take twice as long, which the manual does say.
+    def test_a_half_speed_effect_gets_a_longer_transition
+      send!("AA\x1B\x20gFAST")
+      fast = first_frame[:transition]
+      send!("AA\x1B\x20tSLOW")
+      assert_in_delta fast * Timings::SLOW_TRANSITION_MULTIPLIER, first_frame[:transition]
     end
   end
 end

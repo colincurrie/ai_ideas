@@ -33,6 +33,9 @@
   button { padding: 0.4rem 0.9rem; border-radius: 6px; border: 1px solid #3a3f4b; background: #262a33; color: #e8e8e8; cursor: pointer; font-size: 0.85rem; }
   button:hover { background: #303542; }
   .empty { color: #666; font-size: 0.9rem; }
+  .est { color: #ffd479; border-bottom: 1px dotted #c99a2e; }
+  .frame-meta { font-size: 0.78rem; color: #7b8494; margin: 0.2rem 0 0.5rem; }
+  .frame-label { display: flex; gap: 0.6rem; align-items: baseline; }
 </style>
 </head>
 <body>
@@ -45,10 +48,10 @@
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:baseline;">
       <strong style="font-size:0.95rem;">Display</strong>
-      <span class="muted">135 × 16 · one frame per text file in the run sequence</span>
+      <span class="muted">135 × 16 · the run sequence, playing</span>
     </div>
     <div id="frames"></div>
-    <p class="muted" style="margin-bottom:0;">Glyphs are an approximation, not the Aurora's font, and effects aren't animated — each file is drawn as the still frame it settles into. Good for checking layout, colour and which files get called; not for deciding whether a message fits.</p>
+    <p class="muted" style="margin-bottom:0;">Glyphs are an approximation, not the Aurora's font, so use this for layout, colour and which files get called — not for deciding whether a message fits. Effects marked <span class="est">estimated</span> move at guessed speeds: the manual gives the pause between frames but never a scroll rate. See <code>tools/fake_sign/CALIBRATION.md</code>.</p>
   </div>
 
   <div class="card">
@@ -65,48 +68,102 @@
     <div class="log" id="log"></div>
   </div>
 </div>
+<script src="/animate.js"></script>
 <script>
 const COLOURS = ["#000", "#ff3b3b", "#33e06a", "#ffd21f"];
 
 function drawFrame(pixels) {
-  const height = pixels.length;
-  const width = pixels[0].length;
   const cell = 4;
   const canvas = document.createElement("canvas");
-  canvas.width = width * cell;
-  canvas.height = height * cell;
+  canvas.width = pixels[0].length * cell;
+  canvas.height = pixels.length * cell;
+  paint(canvas, pixels);
+  return canvas;
+}
+
+// The run sequence, playing. Each text file gets its effect's full cycle,
+// then the next one takes over - which is what the sign does.
+let player = { frames: [], timings: null, index: 0, startedAt: 0, canvases: [] };
+
+function signatureOf(frames) {
+  return JSON.stringify(frames.map((f) => [f.label, f.motion, f.canvas.width, f.pause, f.transition]));
+}
+
+function buildFrames(frames, timings) {
+  const host = document.getElementById("frames");
+  host.innerHTML = "";
+  player.canvases = [];
+
+  if (!frames.length) {
+    host.innerHTML = '<p class="empty">Nothing in the run sequence — no text file has content yet.</p>';
+    return;
+  }
+
+  frames.forEach((frame) => {
+    const head = document.createElement("div");
+    head.className = "frame-label";
+    const name = document.createElement("span");
+    name.textContent = `text file ${frame.label}`;
+    head.appendChild(name);
+
+    const meta = document.createElement("div");
+    meta.className = "frame-meta";
+    const seconds = Animate.duration(frame, timings).toFixed(1);
+    meta.textContent = `${frame.description} · ${frame.position} · ${seconds}s cycle · ${frame.pause}s pause`;
+    if (frame.approximated) {
+      const flag = document.createElement("span");
+      flag.className = "est";
+      flag.textContent = " · approximated";
+      meta.appendChild(flag);
+    }
+
+    const panel = document.createElement("div");
+    panel.className = "panel";
+    const canvas = drawFrame(Animate.blank());
+    panel.appendChild(canvas);
+    player.canvases.push(canvas);
+
+    host.append(head, meta, panel);
+  });
+}
+
+function paint(canvas, pixels) {
+  const cell = 4;
   const ctx = canvas.getContext("2d");
   ctx.fillStyle = "#0a0a0a";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
+  for (let y = 0; y < pixels.length; y++) {
+    for (let x = 0; x < pixels[y].length; x++) {
       const code = pixels[y][x];
       if (!code) continue;
       ctx.fillStyle = COLOURS[code];
       ctx.fillRect(x * cell, y * cell, cell - 1, cell - 1);
     }
   }
-  return canvas;
 }
 
-function renderFrames(frames) {
-  const host = document.getElementById("frames");
-  host.innerHTML = "";
-  if (!frames.length) {
-    host.innerHTML = '<p class="empty">Nothing in the run sequence — no text file has content yet.</p>';
-    return;
+function tick() {
+  requestAnimationFrame(tick);
+  if (!player.frames.length || !player.timings) return;
+
+  const now = performance.now() / 1000;
+  const current = player.frames[player.index];
+  const elapsed = now - player.startedAt;
+  const cycle = Animate.duration(current, player.timings);
+
+  if (elapsed >= cycle) {
+    player.index = (player.index + 1) % player.frames.length;
+    player.startedAt = now;
   }
-  frames.forEach((frame) => {
-    const label = document.createElement("div");
-    label.className = "frame-label";
-    label.textContent = `text file ${frame.label}`;
-    const panel = document.createElement("div");
-    panel.className = "panel";
-    panel.appendChild(drawFrame(frame.pixels));
-    host.appendChild(label);
-    host.appendChild(panel);
+
+  player.frames.forEach((frame, i) => {
+    // Only the file whose turn it is animates; the rest sit at the end of
+    // their effect, the way they'd look just before handing over.
+    const t = i === player.index ? elapsed : Animate.duration(frame, player.timings);
+    paint(player.canvases[i], Animate.render(frame, t, player.timings));
   });
 }
+requestAnimationFrame(tick);
 
 function renderFiles(sign) {
   const table = document.getElementById("files");
@@ -163,7 +220,17 @@ async function poll() {
     const res = await fetch("/state");
     const state = await res.json();
     document.getElementById("device").textContent = state.device;
-    renderFrames(state.frames);
+    // Only rebuild when the structure changes, so an animation in flight
+    // isn't restarted twice a second by polling.
+    const signature = signatureOf(state.frames);
+    if (signature !== player.signature) {
+      player.signature = signature;
+      player.frames = state.frames;
+      player.timings = state.timings;
+      player.index = 0;
+      player.startedAt = performance.now() / 1000;
+      buildFrames(state.frames, state.timings);
+    }
     renderFiles(state.sign);
     renderLog(state.log);
   } catch (e) { /* server restarting; try again next tick */ }

@@ -335,9 +335,18 @@ The decoder behind it is written from the XDF manual rather than from
 `lib/alpha_sign`, and rejects rather than tolerates - so it disagrees with
 this library when this library is wrong. Fed the `"_0D"` row terminator
 this project shipped for weeks, it reports the exact fault and reproduces
-the symptom. See `tools/fake_sign/README.md` for what it does and doesn't
-model (glyph shapes are approximate; effects aren't animated; it won't
-answer read requests).
+the symptom.
+
+Effects animate, with the geometry taken from Appendix C and D. Their
+*speeds* are a different matter: the manual states the pause between frames
+exactly and never says how fast anything moves, so the scroll rate,
+transition duration and flash rate are estimates - collected in
+`tools/fake_sign/timings.rb`, marked as guesses in the preview, and
+replaceable by measuring a filmed sign (`tools/fake_sign/CALIBRATION.md`).
+
+See `tools/fake_sign/README.md` for what else it does and doesn't model
+(glyph shapes are approximate; the decorative effects are impressions; it
+won't answer read requests).
 
 ## Running tests
 

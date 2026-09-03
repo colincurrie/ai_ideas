@@ -72,8 +72,20 @@ Findings come in two severities, and the difference is meaningful:
   metrics the manual describes, not the Aurora's ROM, which we don't have.
   Use the preview for layout, colour and which files get called — not to
   decide whether a message fits.
-- **Effects and timing.** Each file renders as the still frame it settles
-  into. No rotate, no twinkle, no run-time scheduling.
+- **Effect *speeds*.** The geometry of every effect comes from Appendix C
+  and D and is modelled properly - rotate travels, wipes reveal in place,
+  implode and explode split the display. But the manual gives only the
+  *pause* between frames (§26: 17 / 9 / 4.5 / 2.2 / 1 seconds, default
+  4.5). It never says how fast anything moves, so the scroll rate,
+  transition duration and flash rate in `timings.rb` are estimates,
+  labelled as such and gathered in one file so measurements can replace
+  them. `CALIBRATION.md` says how to measure them off a filmed sign.
+- **The decorative extended effects** - twinkle, dissolve, snow, slide and
+  the interlocks. The manual names them and describes their character but
+  gives no pattern, so these are impressions of the right shape rather than
+  reproductions. The preview marks them "approximated".
+- **Run-time scheduling.** Run Time and Run Day tables aren't modelled;
+  every written text file is treated as being in the run sequence.
 - **Read requests.** It logs them and refuses to answer. The reply formats
   come from Alpha's protocol manual rather than XDF's, so answering would
   mean inventing both halves of a conversation and testing one against the

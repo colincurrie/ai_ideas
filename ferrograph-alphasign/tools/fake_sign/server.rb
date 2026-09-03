@@ -7,6 +7,7 @@ require "sinatra/base"
 require_relative "decoder"
 require_relative "sign"
 require_relative "renderer"
+require_relative "timings"
 
 module FakeSign
   # A stand-in for the sign: opens a pseudo-terminal that serial_api (or
@@ -92,6 +93,7 @@ module FakeSign
           device: self.class.device,
           sign: self.class.sign.to_h,
           frames: Renderer.new(self.class.sign).frames,
+          timings: Timings.to_h,
           log: self.class.log.first(50)
         }.to_json
       end
