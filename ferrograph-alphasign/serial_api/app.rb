@@ -12,6 +12,7 @@ require "json"
 require_relative "../lib/alpha_sign"
 require_relative "config"
 require_relative "layout"
+require_relative "layout_store"
 
 module SerialApi
   # The device driver service: owns the serial port and exposes the Alpha
@@ -49,7 +50,11 @@ module SerialApi
       )
       set :conn_mutex, Mutex.new
       set :last_error, nil
-      set :layout, Layout.new
+      # The layout is the only record of what the sign holds - the sign
+      # can't be asked - so it's kept on disk and reloaded here.
+      store = LayoutStore.new(Config.state_file)
+      set :layout_store, store
+      set :layout, store.load
     end
 
     before do
@@ -140,6 +145,7 @@ module SerialApi
 
         settings.last_error = nil
         settings.layout.mark_configured! if reconfiguring
+        settings.layout_store.save(settings.layout)
         response.to_json
       end
 
@@ -193,7 +199,8 @@ module SerialApi
         data_bits: Config.data_bits, stop_bits: Config.stop_bits,
         address: Config.address, type: Config.type,
         connected: settings.connection.connected?,
-        last_error: settings.last_error
+        last_error: settings.last_error,
+        state: settings.layout_store.to_h
       }.to_json
     end
 
@@ -335,6 +342,23 @@ module SerialApi
       text_file = AlphaSign::TextFile.new("", priority: true)
       send_standalone(text_file.to_packet(type: packet_type, address: packet_address),
                       dry_run: truthy?(params[:dry_run]))
+    end
+
+    # Re-sends everything: a Memory Configuration followed by every file's
+    # contents.
+    #
+    # The saved layout says what was last *sent*, not what the sign is
+    # holding now, and nothing can check - read-back gets no answer from
+    # real hardware. So when the two have parted company (the sign lost its
+    # battery-backed memory, someone drove it with another tool, the state
+    # file was restored from a backup), this is how to make the sign match
+    # the record again. It blanks the display briefly, which is why it
+    # isn't automatic.
+    post "/resync" do
+      settings.layout.forget_configuration!
+      packets = settings.layout.content_packets(type: packet_type, address: packet_address)
+      write_layout_change(packets, dry_run: truthy?(json_body[:dry_run]),
+                                   extra: { resynced: true, files: settings.layout.to_h.transform_values(&:keys) })
     end
 
     # --- Reading back from the sign ---

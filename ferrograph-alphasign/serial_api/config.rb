@@ -44,5 +44,18 @@ module SerialApi
     def port
       Integer(ENV.fetch("SERIAL_API_PORT", "4568"))
     end
+
+    # Where the layout is kept between restarts. Set it to somewhere
+    # durable in production - under systemd, /var/lib/ferrograph/layout.json
+    # with StateDirectory=ferrograph - since the default sits inside the
+    # checkout and a fresh clone starts blank.
+    #
+    # Set it to an empty string to turn persistence off entirely; the
+    # service then behaves as it did before, forgetting everything on
+    # restart.
+    def state_file
+      path = ENV.fetch("SERIAL_API_STATE_FILE", File.expand_path("../tmp/layout.json", __dir__))
+      path.to_s.empty? ? nil : path
+    end
   end
 end

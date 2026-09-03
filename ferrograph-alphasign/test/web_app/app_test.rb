@@ -210,6 +210,12 @@ module WebApp
       assert_equal "F", call[2][:command_code]
     end
 
+    def test_api_resync_proxies
+      login!
+      post "/api/resync", "{}", "CONTENT_TYPE" => "application/json"
+      assert_equal [:post, "/resync"], @fake_client.calls.first[0, 2]
+    end
+
     def test_boot_fails_clearly_on_a_malformed_password_hash
       # Regression test: bin/hash_password used to leak its "Password to
       # hash: " prompt into stdout, so `WEB_APP_PASSWORD_HASH=$(bin/hash_password)`

@@ -273,6 +273,11 @@ Type=simple
 User=pi
 WorkingDirectory=/home/pi/ferrograph-alphasign
 EnvironmentFile=/etc/ferrograph/serial-api.env
+# Where the record of what the sign is holding lives. systemd creates
+# /var/lib/ferrograph and hands it to this service; keeping it out of the
+# checkout means a fresh clone or redeploy doesn't lose track of the sign.
+StateDirectory=ferrograph
+Environment=SERIAL_API_STATE_FILE=/var/lib/ferrograph/layout.json
 ExecStart=/usr/bin/env bundle exec rackup serial_api/config.ru -o 127.0.0.1 -p 4568
 Restart=on-failure
 

@@ -152,6 +152,7 @@ Endpoints (all JSON):
 | POST | `/priority` | same shape as `/messages`, targets the Priority Text File |
 | DELETE | `/priority` | clear the priority override |
 | POST | `/raw` | `{command_code, data, type, address, dry_run}` - escape hatch for anything not wrapped above |
+| POST | `/resync` | re-send the memory configuration and every file, so the sign matches this record |
 | GET | `/sign/memory_config` | ask the sign what files it holds (Read Special Function 0x24) |
 | GET | `/sign/dump` | ask for every defined file (Memory Dump, 0x25) - slow, 30s default timeout |
 | GET | `/sign/text/:label`, `/sign/string/:label`, `/sign/image/:label` | read one file back |
@@ -393,12 +394,10 @@ in this repo's history were actually found.
 ## Known limitations / roadmap
 
 - **`GET /files` reflects what this server has sent, not the sign's
-  actual state.** Restart `serial_api` and it forgets every file, while
-  the sign carries on displaying them. The `/sign/*` endpoints above can
-  now *ask* the sign what it holds, and the transport for that is working
-  and tested - but nothing yet parses the replies back into the layout, so
-  there's still no sync and no load-on-startup. See "Reading back from the
-  sign" below for why that step is waiting on evidence.
+  actual state.** It survives a restart now (see "Keeping track of what the
+  sign holds"), but nothing can verify it: read-back gets no answer from
+  real hardware, so if the sign is reset or driven by another tool, the
+  record silently stops being true. `POST /resync` is the repair.
 - **No checksum on outgoing packets.** Valid, simpler protocol form, but
   means a corrupted send isn't caught by the sign - see
   `docs/xdf-firmware-notes.md`, "Checksum processing" for what's at stake.
@@ -423,6 +422,31 @@ in this repo's history were actually found.
   fallback shown if the sign stops hearing from this app), beeper and
   aux-port/IO control, and live time/date display codes. All reachable
   today via the `raw` command/endpoint in the meantime.
+
+## Keeping track of what the sign holds
+
+The sign can't be asked what it's holding - XDF's read-back commands got no
+reply from real hardware (see below) - so `serial_api`'s record of the
+files is the only one there is. It's kept on disk, at
+`SERIAL_API_STATE_FILE` (default `tmp/layout.json`), written after every
+change and reloaded at boot. Set that variable to an empty string to turn
+persistence off.
+
+A restart therefore doesn't blank the display or lose track: the layout
+comes back including the memory configuration signature, so the next small
+edit is still just a text-file write. The sign keeps its own layout in
+battery-backed memory, so after an ordinary restart the two still agree.
+
+When they don't - the sign lost its memory, someone drove it with another
+tool, the state file came from a backup - nothing can detect it. `POST
+/resync` (the **Re-send everything** button in the web app) sends a fresh
+Memory Configuration followed by every file, which blanks the display
+briefly and is why it isn't automatic.
+
+A state file that's missing, truncated or the wrong shape is stepped over
+rather than fatal: the service boots with an empty layout and says so in
+`GET /status`, since one reconfiguration is a cheaper failure than a
+service that won't start.
 
 ## Reading back from the sign
 

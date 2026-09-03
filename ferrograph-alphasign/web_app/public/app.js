@@ -121,6 +121,23 @@ async function refreshStatus() {
     return;
   }
 
+  // The sign can't be asked what it holds, so this list is a record of
+  // what was sent - say where that record lives and when it was written,
+  // because its age is the only clue to whether it's still true.
+  const note = document.getElementById("state-note");
+  if (body.state && body.state.error) {
+    note.textContent = `state not saved: ${body.state.error}`;
+    note.className = "chip-warning";
+  } else if (body.state && body.state.enabled) {
+    note.textContent = body.state.loaded_at
+      ? `restored from ${new Date(body.state.loaded_at).toLocaleString()}`
+      : "state saved between restarts";
+    note.className = "muted";
+  } else {
+    note.textContent = "not saving state - a restart forgets these files";
+    note.className = "muted";
+  }
+
   if (body.connected) {
     dot.className = "dot ok";
     const parityCode = (body.parity || "?")[0].toUpperCase();
@@ -955,6 +972,30 @@ document.getElementById("image-download-btn").addEventListener("click", download
 document.getElementById("image-preview-btn").addEventListener("click", () => sendImage(true));
 document.getElementById("image-send-btn").addEventListener("click", () => sendImage(false));
 document.getElementById("image-force-btn").addEventListener("click", () => sendImage(false, true));
+
+// Re-sends the configuration and every file. Needed when the sign and
+// this record have parted company - the sign lost its memory, or something
+// else wrote to it - which nothing can detect automatically, since the
+// sign won't answer a read.
+document.getElementById("resync-btn").addEventListener("click", async () => {
+  const button = document.getElementById("resync-btn");
+  button.disabled = true;
+  button.textContent = "Re-sending…";
+  const { ok, body } = await fetchJSON("/api/resync", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+  button.disabled = false;
+  button.textContent = "Re-send everything";
+  if (!ok) {
+    flashError(body.error || "Re-send failed");
+    return;
+  }
+  clearError();
+  await refreshMessages();
+  await refreshStatus();
+});
 
 // --- Reading back from the sign ---
 

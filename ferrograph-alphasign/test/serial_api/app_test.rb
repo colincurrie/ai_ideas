@@ -1,5 +1,7 @@
 require "test_helper"
 require "rack/test"
+require "tmpdir"
+require "fileutils"
 require_relative "../../serial_api/app"
 
 module SerialApi
@@ -61,6 +63,11 @@ module SerialApi
     end
 
     def setup
+      # A store per test, in a temporary directory, so persistence is
+      # exercised for real without tests leaking state into each other.
+      @state_dir = Dir.mktmpdir("serial-api-state")
+      @state_file = File.join(@state_dir, "layout.json")
+      App.set :layout_store, LayoutStore.new(@state_file)
       App.set :layout, Layout.new
       App.set :last_error, nil
       @recorder = RecordingConnection.new
@@ -71,6 +78,14 @@ module SerialApi
         App.send(:remove_const, :RECONFIGURE_PAUSE)
         App.const_set(:RECONFIGURE_PAUSE, 0)
       end
+    end
+
+    def teardown
+      FileUtils.remove_entry(@state_dir) if @state_dir && File.exist?(@state_dir)
+    end
+
+    def saved_state
+      JSON.parse(File.read(@state_file), symbolize_names: true)
     end
 
     def json_post(path, payload)
@@ -340,6 +355,80 @@ module SerialApi
       get "/sign/memory_config"
       assert_equal 502, last_response.status
       assert_match(/serialport/, JSON.parse(last_response.body)["error"])
+    end
+
+    # --- persistence ---
+
+    # The sign can't be asked what it holds (read-back gets no answer from
+    # real hardware), so this file is the only record. Losing it on every
+    # restart meant the service and the sign silently drifted apart.
+    def test_a_message_is_written_to_the_state_file
+      json_post("/messages", label: "A", runs: [{ text: "HELLO" }])
+      assert File.exist?(@state_file), "the layout should be saved after a write"
+      assert_equal "HELLO", saved_state[:text][:A][:runs].first[:text]
+    end
+
+    def test_the_saved_state_reloads_into_an_equivalent_layout
+      json_post("/messages", label: "A", position: "middle", mode: "hold",
+                             runs: [{ text: "HI", color: "red" }])
+      json_post("/strings", label: "1", text: "WORLD")
+      json_post("/image", label: "P", width: 2, height: 1, pixels: "10")
+
+      restored = LayoutStore.new(@state_file).load
+      assert_equal %w[A], restored.text.keys
+      assert_equal "middle", restored.text["A"].position
+      assert_equal "WORLD", restored.strings["1"].text
+      assert_equal "10", restored.dots["P"].pixels
+      assert_equal 2, restored.dots["P"].width
+    end
+
+    # Restored as it was: the sign keeps its layout in battery-backed
+    # memory, so an ordinary restart shouldn't blank the display just to
+    # re-establish what's already there.
+    def test_reloading_does_not_force_a_reconfiguration
+      json_post("/strings", label: "1", text: "WORLD")
+      restored = LayoutStore.new(@state_file).load
+      refute restored.needs_reconfiguration?
+    end
+
+    def test_deleting_a_file_is_persisted_too
+      json_post("/messages", label: "A", runs: [{ text: "HELLO" }])
+      delete "/messages/A"
+      assert_empty saved_state[:text]
+    end
+
+    def test_a_dry_run_changes_nothing_on_disk
+      json_post("/messages", label: "A", runs: [{ text: "HELLO" }])
+      before = File.read(@state_file)
+      json_post("/messages", label: "B", runs: [{ text: "NOPE" }], dry_run: true)
+      assert_equal before, File.read(@state_file)
+    end
+
+    def test_status_reports_where_the_state_lives
+      get "/status"
+      state = JSON.parse(last_response.body)["state"]
+      assert_equal @state_file, state["path"]
+      assert_equal true, state["enabled"]
+    end
+
+    # --- resync ---
+
+    def test_resync_reconfigures_and_re_sends_every_file
+      json_post("/messages", label: "A", runs: [{ text: "HELLO" }])
+      json_post("/image", label: "P", width: 2, height: 1, pixels: "10")
+      @recorder.packets.clear
+
+      body = json_post("/resync", {})
+      assert body["reconfigured"], "resync forgets the configuration, so one is sent"
+      written = @recorder.packets.join
+      assert_includes written, "AA", "the text file is re-sent"
+      assert_includes written, "IP0102", "and so is the picture"
+    end
+
+    def test_resync_with_nothing_stored_is_harmless
+      body = json_post("/resync", {})
+      assert_equal 200, last_response.status
+      assert body["ok"]
     end
 
     def test_raw_requires_command_code

@@ -1,3 +1,5 @@
+require "time"
+
 module SerialApi
   # Tracks what files the sign should hold (text, string and dots picture)
   # and their contents, and works out when a Memory Configuration actually
@@ -124,6 +126,56 @@ module SerialApi
     def dots_file(label, file = @dots[label])
       rows = file.pixels.chars.each_slice(file.width).map(&:join)
       AlphaSign::DotsFile.new(rows, label: label)
+    end
+
+    # --- persistence ---
+    #
+    # The layout is the only record of what the sign is holding: XDF's
+    # read-back didn't answer on real hardware (see docs/xdf-firmware-notes.md),
+    # so a restart used to mean the service forgot everything while the sign
+    # carried on displaying it. These two turn it into something that
+    # survives.
+    #
+    # The pixel data goes in whole - a full-width picture is about 2KB of
+    # digits, which is nothing to a file and is the only place it exists.
+    def to_state
+      {
+        version: 1,
+        saved_at: Time.now.utc.iso8601,
+        configured_signature: @configured_signature,
+        text: @text.transform_values(&:to_h),
+        strings: @strings.transform_values(&:to_h),
+        dots: @dots.transform_values(&:to_h)
+      }
+    end
+
+    def self.from_state(state)
+      layout = new
+      (state[:text] || {}).each do |label, file|
+        layout.put_text(label.to_s, runs: file[:runs] || [], position: file[:position],
+                                    mode: file[:mode], speed: file[:speed])
+      end
+      (state[:strings] || {}).each do |label, file|
+        layout.put_string(label.to_s, text: file[:text].to_s)
+      end
+      (state[:dots] || {}).each do |label, file|
+        layout.put_dots(label.to_s, width: file[:width], height: file[:height],
+                                    pixels: file[:pixels].to_s, monochrome: file[:monochrome])
+      end
+      # Restored as-is: the sign keeps its file layout in battery-backed
+      # memory, so after an ordinary restart it still holds what this says.
+      # When that's not true - the sign was reset, or something else wrote
+      # to it - POST /resync re-sends everything.
+      layout.configured_signature = state[:configured_signature]
+      layout
+    end
+
+    attr_accessor :configured_signature
+
+    # Forget what the sign was last configured for, so the next change
+    # sends a fresh Memory Configuration and re-writes every file.
+    def forget_configuration!
+      @configured_signature = nil
     end
 
     # Snapshot for GET /files - what's tracked, without the bulky pixel data.
