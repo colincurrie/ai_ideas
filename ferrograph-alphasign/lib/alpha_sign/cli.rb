@@ -127,17 +127,30 @@ module AlphaSign
       send_packet(packet, opts)
     end
 
+    # Every command that opens the port goes through here, so a missing
+    # --device is reported the same way each time. Without the check the
+    # device reaches SerialPort.new as nil and surfaces as a bare "wrong
+    # argument type (TypeError)" from inside the gem, which says nothing
+    # about what the caller got wrong.
+    def open_connection(opts)
+      if opts[:device].nil? || opts[:device].to_s.empty?
+        warn "Error: --device is required (e.g. --device /dev/ttyUSB0, " \
+             "or --device /dev/tty.usbserial-XXXX on macOS)."
+        warn "       Run `ls /dev/tty.usbserial-* /dev/ttyUSB*` to find yours."
+        exit 1
+      end
+
+      SerialConnection.new(
+        device: opts[:device], baud: opts[:baud], parity: opts[:parity],
+        data_bits: opts[:data_bits], stop_bits: opts[:stop_bits]
+      )
+    end
+
     def send_packet(packet, opts)
       $stderr.puts "Packet (#{packet.bytes.size} bytes): #{packet.to_hex}" if opts[:dry_run] || opts[:verbose]
       return if opts[:dry_run]
 
-      unless opts[:device]
-        warn "Error: --device is required (e.g. --device /dev/ttyUSB0)"
-        exit 1
-      end
-
-      conn = SerialConnection.new(device: opts[:device], baud: opts[:baud], data_bits: opts[:data_bits],
-                                   stop_bits: opts[:stop_bits], parity: opts[:parity])
+      conn = open_connection(opts)
       conn.open
       conn.write(packet)
       conn.close
@@ -179,10 +192,7 @@ module AlphaSign
         return
       end
 
-      connection = SerialConnection.new(
-        device: opts[:device], baud: opts[:baud], parity: opts[:parity],
-        data_bits: opts[:data_bits], stop_bits: opts[:stop_bits]
-      )
+      connection = open_connection(opts)
       response = connection.transact(packet, timeout: timeout)
       connection.close
 
@@ -248,10 +258,7 @@ module AlphaSign
          "Read-only in Appendix B, and short - a good canary"]
       ]
 
-      connection = SerialConnection.new(
-        device: opts[:device], baud: opts[:baud], parity: opts[:parity],
-        data_bits: opts[:data_bits], stop_bits: opts[:stop_bits]
-      )
+      connection = open_connection(opts)
 
       answered = []
       probes.each do |name, contents, why|
@@ -309,10 +316,7 @@ module AlphaSign
       parser.parse!(argv)
 
       pattern = "ALPHASIGN LOOPBACK 0123456789"
-      connection = SerialConnection.new(
-        device: opts[:device], baud: opts[:baud], parity: opts[:parity],
-        data_bits: opts[:data_bits], stop_bits: opts[:stop_bits]
-      )
+      connection = open_connection(opts)
       # Framed as a packet so the read stops at EOT rather than waiting out
       # the whole timeout.
       packet = Packet.new(pattern, type: opts[:type], address: opts[:address])
