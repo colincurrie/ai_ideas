@@ -121,6 +121,10 @@ Run `bin/alphasign send --help` for the full list of options (label,
 position, mode, speed, color, font, priority, serial parameters, sign
 address/type).
 
+Needs **Ruby 3.0 or newer** (puma and dotenv set that floor). On a
+Raspberry Pi that means a Bullseye-or-later OS - see `DEPLOY.md` if yours
+is older, since an out-of-support Raspbian can't install the gems at all.
+
 ## serial_api
 
 The device driver service. Configuration is via environment variables

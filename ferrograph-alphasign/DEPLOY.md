@@ -10,6 +10,19 @@ to the sign:
 
 ## 1. Prerequisites on the Pi
 
+**This needs Ruby 3.0 or newer** (puma and dotenv both require it), which
+in practice means a Raspberry Pi OS of Bullseye vintage or later. Check
+first:
+
+```
+ruby -v
+cat /etc/os-release
+```
+
+Bookworm ships Ruby 3.1 and needs nothing special. If you're on something
+older, read "If the Pi is on an old OS" below before going further - it
+will save you an afternoon.
+
 ```
 sudo apt update
 sudo apt install ruby-full build-essential ruby-dev libudev-dev
@@ -17,6 +30,34 @@ sudo apt install ruby-full build-essential ruby-dev libudev-dev
 
 `libudev-dev` (or `libudev1`/`libudev0` depending on your Raspberry Pi OS
 version) is needed to build the `serialport` gem's native extension.
+
+### If the Pi is on an old OS
+
+A Pi that's been sitting in a drawer may be on Raspbian Stretch (Debian 9,
+2017) or Buster. Stretch gives itself away like this:
+
+```
+E: The repository 'http://raspbian.raspberrypi.org/raspbian stretch Release'
+   does no longer have a Release file.
+```
+
+Those repositories have been removed - Stretch went end-of-life in 2020 -
+so `apt update` fails and nothing can be installed until it's pointed at an
+archive mirror. Stretch also ships Ruby 2.3, well below the 3.0 floor, and
+building a modern Ruby there tends to founder on its OpenSSL being too old
+for Ruby 3.1+.
+
+**The quick way out is a fresh SD card with current Raspberry Pi OS.** The
+old card stays exactly as it is, so it's reversible: swap it back whenever
+you like. If the Pi is doing something else that ties it to its current OS
+(a Patchbox OS audio setup, say), check whether that distribution has a
+current release built on Bookworm rather than fighting the old one.
+
+Staying on the old OS is possible - repoint `/etc/apt/sources.list` at the
+archive (`legacy.raspbian.org` is where Raspbian's retired releases went)
+and build Ruby from source with `rbenv` - but it's hours of compiling for a
+machine that will still have no security updates, on a service you're about
+to expose over Tailscale behind a login. Not a trade I'd make.
 
 ## 1b. Getting the code onto the Pi
 
