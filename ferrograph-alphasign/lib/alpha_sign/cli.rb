@@ -315,6 +315,14 @@ module AlphaSign
       end
       parser.parse!(argv)
 
+      # Said before the result, not after, because the result is worthless
+      # if the loopback isn't in place - and "nothing came back" looks
+      # identical whether the wiring is broken or the test wasn't set up.
+      puts "This test needs the sign UNPLUGGED and DB9 pins 2 and 3 shorted"
+      puts "together, so the adapter's own output feeds back into its input."
+      puts "Run against the sign, it will always say nothing came back."
+      puts
+
       pattern = "ALPHASIGN LOOPBACK 0123456789"
       connection = open_connection(opts)
       # Framed as a packet so the read stops at EOT rather than waiting out
@@ -327,9 +335,16 @@ module AlphaSign
       if response.empty?
         puts "received: (nothing)"
         puts
-        puts "Either pins 2 and 3 aren't shorted, or this adapter/cable has no"
-        puts "working receive path. Until that echoes, nothing the sign sends"
-        puts "can reach this computer, and no amount of protocol work will help."
+        puts "This means one of:"
+        puts "  1. pins 2 and 3 weren't actually shorted (or the jumper isn't"
+        puts "     making contact) - by far the most common, so check that first;"
+        puts "  2. the adapter or cable has no working receive path."
+        puts
+        puts "If a bare wire between 2 and 3 is awkward, a proper loopback plug"
+        puts "bridges 2-3, 7-8 and 4-6 - worth trying if the simple short doesn't"
+        puts "echo, in case hardware flow control is holding the transmitter off."
+        puts
+        puts "Only once this echoes is a silent sign evidence about the protocol."
         exit 1
       end
 
