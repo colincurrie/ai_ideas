@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fake sign</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; background: #14161a; color: #e8e8e8; margin: 0; padding: 1.5rem; }
+  .app { max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.25rem; }
+  header { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
+  h1 { font-size: 1.15rem; margin: 0; }
+  .card { background: #1e2128; border: 1px solid #2b2f38; border-radius: 10px; padding: 1rem 1.25rem; }
+  .muted { color: #888; font-size: 0.85rem; }
+  code { background: #101216; padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.85rem; }
+  /* fit-content so the panel hugs the display rather than drawing a wide
+     empty box around it; capped so a full-width frame still scrolls. */
+  .panel { background: #000; border: 1px solid #3a3f4b; border-radius: 6px; overflow-x: auto; padding: 0.5rem; width: fit-content; max-width: 100%; }
+  canvas { image-rendering: pixelated; display: block; }
+  .frame-label { font-size: 0.8rem; color: #9db4d1; margin: 0.75rem 0 0.3rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th { text-align: left; color: #888; font-weight: 500; padding: 0.3rem 0.5rem 0.3rem 0; font-size: 0.8rem; }
+  td { padding: 0.3rem 0.5rem 0.3rem 0; border-top: 1px solid #2b2f38; vertical-align: top; }
+  .log { display: flex; flex-direction: column; gap: 0.5rem; max-height: 26rem; overflow-y: auto; }
+  .entry { background: #14161a; border: 1px solid #2b2f38; border-radius: 6px; padding: 0.5rem 0.75rem; }
+  .entry .head { display: flex; gap: 0.75rem; align-items: baseline; }
+  .entry .when { color: #666; font-size: 0.75rem; }
+  .entry .what { font-size: 0.9rem; }
+  .entry .hex { color: #5a6270; font-size: 0.72rem; font-family: ui-monospace, monospace; word-break: break-all; margin-top: 0.25rem; }
+  .finding { font-size: 0.82rem; margin-top: 0.35rem; padding-left: 0.6rem; border-left: 2px solid; }
+  .finding.error { color: #ff8f94; border-color: #d9534f; }
+  .finding.warning { color: #ffd479; border-color: #c99a2e; }
+  button { padding: 0.4rem 0.9rem; border-radius: 6px; border: 1px solid #3a3f4b; background: #262a33; color: #e8e8e8; cursor: pointer; font-size: 0.85rem; }
+  button:hover { background: #303542; }
+  .empty { color: #666; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Fake sign</h1>
+    <span class="muted">serial device: <code id="device">…</code></span>
+  </header>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;">
+      <strong style="font-size:0.95rem;">Display</strong>
+      <span class="muted">135 × 16 · one frame per text file in the run sequence</span>
+    </div>
+    <div id="frames"></div>
+    <p class="muted" style="margin-bottom:0;">Glyphs are an approximation, not the Aurora's font, and effects aren't animated — each file is drawn as the still frame it settles into. Good for checking layout, colour and which files get called; not for deciding whether a message fits.</p>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;">
+      <strong style="font-size:0.95rem;">Files</strong>
+      <button type="button" id="reset">Reset to default configuration</button>
+    </div>
+    <table id="files"></table>
+  </div>
+
+  <div class="card">
+    <strong style="font-size:0.95rem;">Wire log</strong>
+    <p class="muted">Newest first. Findings are what the manual says the sign would make of these bytes.</p>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+<script>
+const COLOURS = ["#000", "#ff3b3b", "#33e06a", "#ffd21f"];
+
+function drawFrame(pixels) {
+  const height = pixels.length;
+  const width = pixels[0].length;
+  const cell = 4;
+  const canvas = document.createElement("canvas");
+  canvas.width = width * cell;
+  canvas.height = height * cell;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#0a0a0a";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const code = pixels[y][x];
+      if (!code) continue;
+      ctx.fillStyle = COLOURS[code];
+      ctx.fillRect(x * cell, y * cell, cell - 1, cell - 1);
+    }
+  }
+  return canvas;
+}
+
+function renderFrames(frames) {
+  const host = document.getElementById("frames");
+  host.innerHTML = "";
+  if (!frames.length) {
+    host.innerHTML = '<p class="empty">Nothing in the run sequence — no text file has content yet.</p>';
+    return;
+  }
+  frames.forEach((frame) => {
+    const label = document.createElement("div");
+    label.className = "frame-label";
+    label.textContent = `text file ${frame.label}`;
+    const panel = document.createElement("div");
+    panel.className = "panel";
+    panel.appendChild(drawFrame(frame.pixels));
+    host.appendChild(label);
+    host.appendChild(panel);
+  });
+}
+
+function renderFiles(sign) {
+  const table = document.getElementById("files");
+  const rows = Object.entries(sign.files);
+  table.innerHTML = "<tr><th>Label</th><th>Type</th><th>Written</th><th>Contents</th></tr>";
+  rows.forEach(([label, file]) => {
+    const tr = document.createElement("tr");
+    const contents = file.preview || (file.dimensions ? file.dimensions : "");
+    [label, file.type, file.updated ? "yes" : "—", contents].forEach((value) => {
+      const td = document.createElement("td");
+      td.textContent = value;
+      tr.appendChild(td);
+    });
+    table.appendChild(tr);
+  });
+}
+
+function renderLog(entries) {
+  const host = document.getElementById("log");
+  host.innerHTML = "";
+  if (!entries.length) {
+    host.innerHTML = '<p class="empty">Nothing received yet. Point serial_api at the device above and send something.</p>';
+    return;
+  }
+  entries.forEach((entry) => {
+    const div = document.createElement("div");
+    div.className = "entry";
+    const head = document.createElement("div");
+    head.className = "head";
+    const when = document.createElement("span");
+    when.className = "when";
+    when.textContent = entry.at;
+    const what = document.createElement("span");
+    what.className = "what";
+    what.textContent = entry.summary;
+    head.append(when, what);
+    div.appendChild(head);
+    entry.findings.forEach((finding) => {
+      const f = document.createElement("div");
+      f.className = `finding ${finding.severity}`;
+      f.textContent = `${finding.severity}: ${finding.message}`;
+      div.appendChild(f);
+    });
+    const hex = document.createElement("div");
+    hex.className = "hex";
+    hex.textContent = entry.bytes;
+    div.appendChild(hex);
+    host.appendChild(div);
+  });
+}
+
+async function poll() {
+  try {
+    const res = await fetch("/state");
+    const state = await res.json();
+    document.getElementById("device").textContent = state.device;
+    renderFrames(state.frames);
+    renderFiles(state.sign);
+    renderLog(state.log);
+  } catch (e) { /* server restarting; try again next tick */ }
+}
+
+document.getElementById("reset").addEventListener("click", async () => {
+  await fetch("/reset", { method: "POST" });
+  poll();
+});
+
+poll();
+setInterval(poll, 500);
+</script>
+</body>
+</html>

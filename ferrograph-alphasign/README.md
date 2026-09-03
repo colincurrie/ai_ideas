@@ -320,6 +320,25 @@ Two colour-mapping modes for an upload, and the choice matters a lot:
 For actually deploying this on a Raspberry Pi wired to the sign, with
 systemd units and Tailscale for remote access, see **`DEPLOY.md`**.
 
+## Fake sign (no hardware needed)
+
+`bin/fake-sign` stands in for the display: a pseudo-terminal that behaves
+like its serial port, a decoder for what arrives on it, and a live preview
+of what the sign would be showing at http://127.0.0.1:4569.
+
+```
+bin/fake-sign                       # prints a device path, e.g. /dev/pts/3
+SERIAL_DEVICE=/dev/pts/3 bundle exec rackup serial_api/config.ru -o 127.0.0.1 -p 4568
+```
+
+The decoder behind it is written from the XDF manual rather than from
+`lib/alpha_sign`, and rejects rather than tolerates - so it disagrees with
+this library when this library is wrong. Fed the `"_0D"` row terminator
+this project shipped for weeks, it reports the exact fault and reproduces
+the symptom. See `tools/fake_sign/README.md` for what it does and doesn't
+model (glyph shapes are approximate; effects aren't animated; it won't
+answer read requests).
+
 ## Running tests
 
 ```
