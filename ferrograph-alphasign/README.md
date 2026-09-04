@@ -153,6 +153,8 @@ Endpoints (all JSON):
 | DELETE | `/priority` | clear the priority override |
 | POST | `/raw` | `{command_code, data, type, address, dry_run}` - escape hatch for anything not wrapped above |
 | POST | `/resync` | re-send the memory configuration and every file, so the sign matches this record |
+| GET | `/state` | the whole configuration as a document - every file, contents and pixel data |
+| POST | `/state` | `{state, dry_run}` - replace the entire configuration with an uploaded document and send it to the sign |
 | GET | `/sign/memory_config` | ask the sign what files it holds (Read Special Function 0x24) |
 | GET | `/sign/dump` | ask for every defined file (Memory Dump, 0x25) - slow, 30s default timeout |
 | GET | `/sign/text/:label`, `/sign/string/:label`, `/sign/image/:label` | read one file back |
@@ -447,6 +449,27 @@ A state file that's missing, truncated or the wrong shape is stepped over
 rather than fatal: the service boots with an empty layout and says so in
 `GET /status`, since one reconfiguration is a cheaper failure than a
 service that won't start.
+
+### Downloading and uploading a configuration
+
+The same document is available through the web app's **Configuration**
+card: **Download configuration** saves every message, string and picture
+(pixel data included) as one JSON file, and **Upload configuration** loads
+one back onto the sign. Useful as a backup before rearranging things, for
+moving a setup between machines, or for keeping several arrangements and
+switching between them.
+
+Uploading **replaces** rather than merges - a configuration describes the
+sign's whole memory, and merging two would produce a layout that was never
+tested anywhere - so everything currently on the sign goes, the display
+blanks briefly, and the browser asks first.
+
+An uploaded file is untrusted input that goes straight to the sign, so it's
+validated field by field and a bad one is refused with a specific reason
+(`text label "AB" must be a single character`, `dots file "P": expected 4
+pixels (2x2), got 1`) rather than a 500. A rejected upload leaves the
+existing configuration alone, and so does one the sign refuses to accept:
+the record is only adopted once the write succeeds.
 
 ## Reading back from the sign
 

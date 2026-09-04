@@ -107,12 +107,16 @@ module SerialApi
       # doesn't, a Memory Configuration goes first - which erases every
       # file - followed by a full re-send of all file contents, since
       # anything not re-sent would simply be gone.
-      def write_layout_change(packets, dry_run:, extra: {})
-        reconfiguring = settings.layout.needs_reconfiguration?
-        config = reconfiguring ? settings.layout.memory_config : nil
+      # +layout+ is the one being written. It's usually the live one, but
+      # an upload writes a replacement first and only adopts it if the sign
+      # accepts it - a failed write must not leave a record of files the
+      # sign never received.
+      def write_layout_change(packets, dry_run:, extra: {}, layout: settings.layout)
+        reconfiguring = layout.needs_reconfiguration?
+        config = reconfiguring ? layout.memory_config : nil
 
         if reconfiguring
-          packets = settings.layout.content_packets(type: packet_type, address: packet_address)
+          packets = layout.content_packets(type: packet_type, address: packet_address)
         end
 
         response = {
@@ -144,8 +148,10 @@ module SerialApi
         end
 
         settings.last_error = nil
-        settings.layout.mark_configured! if reconfiguring
-        settings.layout_store.save(settings.layout)
+        layout.mark_configured! if reconfiguring
+        # Adopt only now: everything above could have halted.
+        settings.layout = layout
+        settings.layout_store.save(layout)
         response.to_json
       end
 
@@ -359,6 +365,33 @@ module SerialApi
       packets = settings.layout.content_packets(type: packet_type, address: packet_address)
       write_layout_change(packets, dry_run: truthy?(json_body[:dry_run]),
                                    extra: { resynced: true, files: settings.layout.to_h.transform_values(&:keys) })
+    end
+
+    # The whole configuration as a document: every file, its contents, and
+    # what the sign was last configured for. The same shape the state file
+    # holds, so one can be pasted into the other.
+    get "/state" do
+      settings.layout.to_state.to_json
+    end
+
+    # Replaces the entire configuration with an uploaded document and sends
+    # it to the sign.
+    #
+    # Replaces, not merges: a configuration is a whole picture of the sign's
+    # memory, and merging two of them would produce a layout that was never
+    # tested anywhere. Everything currently on the sign goes.
+    post "/state" do
+      body = json_body
+      document = body[:state] || body
+      replacement = Layout.from_state(document) # ArgumentError -> 400, see below
+
+      # Nothing on the sign matches the incoming document yet, so this is
+      # always a full reconfigure-and-resend. The replacement is only
+      # adopted by write_layout_change once the sign has taken it.
+      replacement.forget_configuration!
+      packets = replacement.content_packets(type: packet_type, address: packet_address)
+      write_layout_change(packets, dry_run: truthy?(body[:dry_run]), layout: replacement,
+                                   extra: { replaced: true, files: replacement.to_h.transform_values(&:keys) })
     end
 
     # --- Reading back from the sign ---

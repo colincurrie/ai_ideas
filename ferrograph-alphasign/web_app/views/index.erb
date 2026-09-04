@@ -110,6 +110,11 @@
   /* touch-action keeps a drag painting instead of scrolling the page */
   #image-preview-canvas.paintable { cursor: crosshair; touch-action: none; }
   #image-preview-canvas:focus-visible { outline: 2px solid #4f8cff; outline-offset: -2px; }
+  .upload-label {
+    display: inline-block; padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid #3a3f4b;
+    background: #262a33; color: #e8e8e8; cursor: pointer; font-size: 0.9rem; margin: 0;
+  }
+  .upload-label:hover { background: #303542; }
   kbd {
     background: #14161a; border: 1px solid #3a3f4b; border-bottom-width: 2px;
     border-radius: 3px; padding: 0 0.25rem; font-size: 0.75rem; font-family: inherit;
@@ -311,6 +316,18 @@
     </div>
     <div class="error-msg" id="string-error"></div>
     <pre class="bytes" id="string-bytes-preview" hidden></pre>
+  </div>
+
+  <div class="card">
+    <label style="margin-bottom:0.5rem;">Configuration</label>
+    <p class="muted">The whole set of files as one file: every message, string and picture, with the pixel data. Useful as a backup before changing things, for moving a setup to another machine, or for keeping several arrangements and switching between them.</p>
+    <div class="actions">
+      <button type="button" id="config-download-btn">Download configuration</button>
+      <label for="config-upload" class="upload-label" title="Replaces everything currently on the sign">Upload configuration&hellip;</label>
+      <input type="file" id="config-upload" accept="application/json,.json" hidden>
+    </div>
+    <div class="error-msg" id="config-error"></div>
+    <div class="chip-ok" id="config-note"></div>
   </div>
 
   <div class="card">

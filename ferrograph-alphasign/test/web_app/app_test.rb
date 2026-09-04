@@ -210,6 +210,21 @@ module WebApp
       assert_equal "F", call[2][:command_code]
     end
 
+    def test_api_state_download_proxies
+      login!
+      get "/api/state"
+      assert_equal [[:get, "/state"]], @fake_client.calls
+    end
+
+    def test_api_state_upload_forwards_the_document
+      login!
+      post "/api/state", { state: { version: 1, text: {} } }.to_json,
+           "CONTENT_TYPE" => "application/json"
+      call = @fake_client.calls.first
+      assert_equal [:post, "/state"], call[0, 2]
+      assert_equal 1, call[2][:state][:version]
+    end
+
     def test_api_resync_proxies
       login!
       post "/api/resync", "{}", "CONTENT_TYPE" => "application/json"

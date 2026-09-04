@@ -200,6 +200,14 @@ module WebApp
       proxy(:get, "/sign/#{kind}/#{valid_label!(params[:label])}#{timeout_query}")
     end
 
+    get "/api/state" do
+      proxy(:get, "/state")
+    end
+
+    post "/api/state" do
+      proxy(:post, "/state", parsed_body)
+    end
+
     post "/api/resync" do
       proxy(:post, "/resync", parsed_body)
     end

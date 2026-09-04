@@ -411,6 +411,107 @@ module SerialApi
       assert_equal true, state["enabled"]
     end
 
+    # --- configuration download and upload ---
+
+    def test_state_download_carries_every_file_and_the_pixel_data
+      json_post("/messages", label: "A", runs: [{ text: "HELLO" }])
+      json_post("/strings", label: "1", text: "WORLD")
+      json_post("/image", label: "P", width: 2, height: 2, pixels: "1230")
+
+      get "/state"
+      assert_equal 200, last_response.status
+      state = JSON.parse(last_response.body, symbolize_names: true)
+      assert_equal 1, state[:version]
+      assert_equal "HELLO", state[:text][:A][:runs].first[:text]
+      assert_equal "WORLD", state[:strings][:"1"][:text]
+      assert_equal "1230", state[:dots][:P][:pixels], "the pixels are the only copy, so they must be in the file"
+    end
+
+    # Download then upload should reproduce the same sign.
+    def test_a_downloaded_configuration_can_be_uploaded_back
+      json_post("/messages", label: "A", runs: [{ text: "HELLO" }])
+      json_post("/image", label: "P", width: 2, height: 2, pixels: "1230")
+      get "/state"
+      document = JSON.parse(last_response.body, symbolize_names: true)
+
+      json_post("/messages", label: "A", runs: [{ text: "SOMETHING ELSE" }])
+      @recorder.packets.clear
+
+      body = json_post("/state", state: document)
+      assert body["replaced"]
+
+      get "/files"
+      assert_equal "HELLO", JSON.parse(last_response.body).dig("text", "A", "runs", 0, "text"),
+                   "the uploaded configuration replaced the edit"
+
+      written = @recorder.packets.join
+      assert_includes written, "AA", "the text file is sent"
+      assert_includes written, "IP0202", "and the picture"
+    end
+
+    def test_uploading_replaces_rather_than_merges
+      json_post("/messages", label: "B", runs: [{ text: "OLD" }])
+      json_post("/state", state: { version: 1, text: { A: { runs: [{ text: "NEW" }] } } })
+
+      get "/files"
+      files = JSON.parse(last_response.body)
+      assert_equal %w[A], files["text"].keys, "B belonged to the old configuration and is gone"
+    end
+
+    def test_a_dry_run_upload_leaves_the_sign_and_the_record_alone
+      json_post("/messages", label: "B", runs: [{ text: "OLD" }])
+      @recorder.packets.clear
+
+      json_post("/state", state: { version: 1, text: { A: { runs: [{ text: "NEW" }] } } }, dry_run: true)
+      assert_empty @recorder.packets
+      get "/files"
+      assert_equal %w[B], JSON.parse(last_response.body)["text"].keys
+    end
+
+    # An uploaded file is untrusted input that goes straight to the sign,
+    # so a bad one should say which field is wrong, not 500.
+    def test_a_malformed_upload_is_rejected_with_a_specific_reason
+      cases = {
+        { version: 99 } => /state version 99/,
+        { text: "not an object" } => /text must be an object/,
+        { text: { AB: { runs: [] } } } => /must be a single character/,
+        { text: { A: "not an object" } } => /must be an object/,
+        { text: { A: { runs: "not a list" } } } => /runs must be a list/,
+        { dots: { P: { width: 2, height: 2, pixels: "1" } } } => /expected 4 pixels/,
+        { dots: { P: { width: 0, height: 2, pixels: "" } } } => /width must be positive/,
+        { dots: { P: { width: "wide", height: 2, pixels: "" } } } => /width must be a positive integer/
+      }
+
+      cases.each do |document, expected|
+        json_post("/state", state: document)
+        assert_equal 400, last_response.status, "#{document.inspect} should be rejected"
+        assert_match expected, JSON.parse(last_response.body)["error"]
+      end
+    end
+
+    def test_a_rejected_upload_leaves_the_previous_configuration_in_place
+      json_post("/messages", label: "B", runs: [{ text: "KEEP ME" }])
+      json_post("/state", state: { text: { A: { runs: "not a list" } } })
+      assert_equal 400, last_response.status
+
+      get "/files"
+      assert_equal "KEEP ME", JSON.parse(last_response.body).dig("text", "B", "runs", 0, "text")
+    end
+
+    # If the sign won't take the upload, the record mustn't claim it did.
+    def test_a_failed_write_does_not_adopt_the_uploaded_configuration
+      json_post("/messages", label: "B", runs: [{ text: "KEEP ME" }])
+      App.set :connection, FailingConnection.new(StandardError.new("port went away"))
+
+      json_post("/state", state: { version: 1, text: { A: { runs: [{ text: "NEW" }] } } })
+      assert_equal 502, last_response.status
+
+      App.set :connection, @recorder
+      get "/files"
+      assert_equal %w[B], JSON.parse(last_response.body)["text"].keys,
+                   "the sign never received the upload, so the record still shows what it has"
+    end
+
     # --- resync ---
 
     def test_resync_reconfigures_and_re_sends_every_file

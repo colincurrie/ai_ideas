@@ -149,18 +149,46 @@ module SerialApi
       }
     end
 
+    STATE_VERSION = 1
+
+    # Rebuilds a layout from a saved state document.
+    #
+    # Strict, and raising ArgumentError with a specific message, because
+    # this parses two quite different things: a file this service wrote, and
+    # a file someone uploaded through the web app. The second is untrusted
+    # and goes straight to the sign, so "which field is wrong" has to be
+    # answerable. Callers choose what to do with the failure - the store
+    # steps over it and boots empty, the endpoint turns it into a 400.
     def self.from_state(state)
+      raise ArgumentError, "expected a JSON object, got #{state.class}" unless state.is_a?(Hash)
+
+      version = state[:version]
+      unless version.nil? || version == STATE_VERSION
+        raise ArgumentError, "state version #{version.inspect} isn't one this version understands (expected #{STATE_VERSION})"
+      end
+
       layout = new
-      (state[:text] || {}).each do |label, file|
-        layout.put_text(label.to_s, runs: file[:runs] || [], position: file[:position],
-                                    mode: file[:mode], speed: file[:speed])
+      each_file(state, :text) do |label, file|
+        runs = file[:runs] || []
+        raise ArgumentError, "text file #{label.inspect}: runs must be a list, got #{runs.class}" unless runs.is_a?(Array)
+
+        layout.put_text(label, runs: runs, position: file[:position],
+                               mode: file[:mode], speed: file[:speed])
       end
-      (state[:strings] || {}).each do |label, file|
-        layout.put_string(label.to_s, text: file[:text].to_s)
+      each_file(state, :strings) do |label, file|
+        layout.put_string(label, text: file[:text].to_s)
       end
-      (state[:dots] || {}).each do |label, file|
-        layout.put_dots(label.to_s, width: file[:width], height: file[:height],
-                                    pixels: file[:pixels].to_s, monochrome: file[:monochrome])
+      each_file(state, :dots) do |label, file|
+        width = positive_integer!(file[:width], "dots file #{label.inspect}: width")
+        height = positive_integer!(file[:height], "dots file #{label.inspect}: height")
+        pixels = file[:pixels].to_s
+        if pixels.length != width * height
+          raise ArgumentError, "dots file #{label.inspect}: expected #{width * height} pixels " \
+                               "(#{width}x#{height}), got #{pixels.length}"
+        end
+
+        layout.put_dots(label, width: width, height: height,
+                               pixels: pixels, monochrome: file[:monochrome])
       end
       # Restored as-is: the sign keeps its file layout in battery-backed
       # memory, so after an ordinary restart it still holds what this says.
@@ -169,6 +197,35 @@ module SerialApi
       layout.configured_signature = state[:configured_signature]
       layout
     end
+
+    # Walks one section of a state document, checking the shape as it goes.
+    def self.each_file(state, kind)
+      files = state[kind]
+      return if files.nil?
+
+      raise ArgumentError, "#{kind} must be an object of label => file, got #{files.class}" unless files.is_a?(Hash)
+
+      files.each do |label, file|
+        label = label.to_s
+        # A file label is one character on the wire; anything else can't be
+        # addressed, so it would fail later and more obscurely.
+        raise ArgumentError, "#{kind} label #{label.inspect} must be a single character" unless label.length == 1
+        raise ArgumentError, "#{kind} file #{label.inspect} must be an object, got #{file.class}" unless file.is_a?(Hash)
+
+        yield label, file
+      end
+    end
+    private_class_method :each_file
+
+    def self.positive_integer!(value, what)
+      integer = Integer(value)
+      raise ArgumentError, "#{what} must be positive, got #{integer}" unless integer.positive?
+
+      integer
+    rescue TypeError, ArgumentError => e
+      raise ArgumentError, e.message.start_with?(what) ? e.message : "#{what} must be a positive integer (#{value.inspect})"
+    end
+    private_class_method :positive_integer!
 
     attr_accessor :configured_signature
 

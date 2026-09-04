@@ -997,6 +997,87 @@ document.getElementById("resync-btn").addEventListener("click", async () => {
   await refreshStatus();
 });
 
+// --- Configuration download and upload ---
+
+function configFileName() {
+  // Sortable, and distinguishable at a glance in a folder of them.
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+  return `ferrograph-config-${stamp}.json`;
+}
+
+document.getElementById("config-download-btn").addEventListener("click", async () => {
+  const errorEl = document.getElementById("config-error");
+  const noteEl = document.getElementById("config-note");
+  errorEl.textContent = "";
+
+  const { ok, body } = await fetchJSON("/api/state");
+  if (!ok) {
+    errorEl.textContent = body.error || "Couldn't read the configuration";
+    noteEl.textContent = "";
+    return;
+  }
+
+  const blob = new Blob([JSON.stringify(body, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = configFileName();
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+
+  const counts = ["text", "strings", "dots"].map((k) => Object.keys(body[k] || {}).length);
+  noteEl.textContent = `Saved ${link.download} - ${counts[0]} message(s), ${counts[1]} string(s), ${counts[2]} image(s).`;
+});
+
+document.getElementById("config-upload").addEventListener("change", async (event) => {
+  const file = event.target.files[0];
+  event.target.value = ""; // so choosing the same file twice still fires
+  if (!file) return;
+
+  const errorEl = document.getElementById("config-error");
+  const noteEl = document.getElementById("config-note");
+  errorEl.textContent = "";
+  noteEl.textContent = "";
+
+  let document_;
+  try {
+    document_ = JSON.parse(await file.text());
+  } catch (e) {
+    errorEl.textContent = `${file.name} isn't valid JSON: ${e.message}`;
+    return;
+  }
+
+  // Replacing is destructive and blanks the display, so say so plainly
+  // before doing it rather than offering an undo that doesn't exist.
+  const summary = ["text", "strings", "dots"]
+    .map((k) => `${Object.keys(document_[k] || {}).length} ${k}`)
+    .join(", ");
+  if (!window.confirm(
+    `Replace everything on the sign with ${file.name} (${summary})?\n\n` +
+    "Every file currently on the sign is erased and the display blanks briefly. " +
+    "Download the current configuration first if you might want it back."
+  )) return;
+
+  noteEl.textContent = "Sending to the sign…";
+  const { ok, body } = await fetchJSON("/api/state", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ state: document_ })
+  });
+
+  if (!ok) {
+    noteEl.textContent = "";
+    errorEl.textContent = body.error || "Upload failed";
+    return;
+  }
+
+  await refreshMessages();
+  await refreshStatus();
+  noteEl.textContent = `Loaded ${file.name} onto the sign.`;
+});
+
 // --- Reading back from the sign ---
 
 function readLabelNeeded() {
