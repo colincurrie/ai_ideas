@@ -1,0 +1,7 @@
+/Gemfile.lock
+*.gem
+.bundle/
+*.log
+*.pid
+/.env
+/tmp/

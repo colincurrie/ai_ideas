@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ferrograph Sign Control</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  /* display:flex on .row/.toolbar would otherwise win over the hidden
+     attribute, leaving both image panels on screen at once. */
+  [hidden] { display: none !important; }
+  body {
+    font-family: system-ui, sans-serif;
+    background: #14161a;
+    color: #e8e8e8;
+    margin: 0;
+    padding: 1.5rem;
+  }
+  .app { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.25rem; }
+  header { display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 1.15rem; margin: 0; }
+  header form { margin: 0; }
+  header button.link {
+    background: none; border: none; color: #9db4d1; cursor: pointer; font-size: 0.85rem; padding: 0;
+  }
+  .card {
+    background: #1e2128;
+    border: 1px solid #2b2f38;
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+  }
+  .status-bar { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: #aaa; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #555; display: inline-block; }
+  .dot.ok { background: #4caf6a; }
+  .dot.bad { background: #d9534f; }
+  .row { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center; margin-bottom: 0.75rem; }
+  label { font-size: 0.8rem; color: #aaa; display: block; margin-bottom: 0.2rem; }
+  select, input[type=text], input[type=number] {
+    background: #14161a; color: #e8e8e8; border: 1px solid #3a3f4b; border-radius: 6px;
+    padding: 0.4rem 0.5rem; font-size: 0.9rem;
+  }
+  .toolbar { display: flex; gap: 0.5rem; align-items: flex-end; margin-bottom: 0.6rem; flex-wrap: wrap; }
+  #editor {
+    min-height: 3.5rem;
+    border: 1px solid #3a3f4b;
+    border-radius: 6px;
+    padding: 0.6rem 0.75rem;
+    background: #101216;
+    font-size: 1rem;
+    line-height: 1.5;
+    outline: none;
+  }
+  #editor:empty::before { content: attr(data-placeholder); color: #666; }
+  .actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+  button {
+    padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid #3a3f4b;
+    background: #262a33; color: #e8e8e8; cursor: pointer; font-size: 0.9rem;
+  }
+  button.primary { background: #4f8cff; border-color: #4f8cff; color: white; }
+  button.primary:hover { background: #3f7aeb; }
+  button:hover { background: #303542; }
+  button.primary:hover { background: #3f7aeb; }
+  button.danger:hover { background: #4a2224; }
+  pre.bytes {
+    background: #101216; border: 1px solid #2b2f38; border-radius: 6px;
+    padding: 0.6rem 0.75rem; font-size: 0.78rem; overflow-x: auto; margin-top: 0.75rem; color: #9db4d1;
+  }
+  ul.labels { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+  ul.labels li {
+    display: flex; justify-content: space-between; align-items: center; gap: 0.75rem;
+    background: #14161a; border: 1px solid #2b2f38; border-radius: 6px; padding: 0.5rem 0.75rem;
+  }
+  ul.labels .content { font-size: 0.85rem; color: #ccc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  ul.labels .label-tag { font-weight: 600; color: #4f8cff; margin-right: 0.5rem; }
+  ul.labels .btns { display: flex; gap: 0.4rem; flex-shrink: 0; }
+  details summary { cursor: pointer; color: #aaa; font-size: 0.9rem; }
+  .muted { color: #777; font-size: 0.8rem; }
+  .error-msg { color: #ff8f94; font-size: 0.85rem; margin-top: 0.5rem; }
+  .chip-ok { color: #4caf6a; font-size: 0.85rem; }
+  .ref-chip {
+    display: inline-block; background: #2b3550; border: 1px solid #4f8cff;
+    border-radius: 4px; padding: 0 0.35rem; margin: 0 0.15rem; font-size: 0.85rem;
+    color: #9db4d1; user-select: all; white-space: nowrap;
+  }
+  .chip-warning { color: #ff8f94; font-size: 0.85rem; font-weight: 600; }
+  input[type=file] { color: #e8e8e8; font-size: 0.85rem; }
+  input[type=number] { width: 5rem; }
+  #draw-palette { display: flex; gap: 0.35rem; }
+  #draw-palette .swatch {
+    display: flex; align-items: center; gap: 0.35rem;
+    padding: 0.35rem 0.6rem; font-size: 0.85rem;
+  }
+  #draw-palette .swatch::before {
+    content: ""; width: 0.85rem; height: 0.85rem; border-radius: 3px;
+    background: var(--swatch); border: 1px solid #5a6070;
+  }
+  #draw-palette .swatch.active { border-color: #4f8cff; background: #2b3550; color: #fff; }
+  #image-canvas-scroll {
+    /* Wide pictures scroll here rather than stretching the page. Background
+       stays transparent so the black is exactly the canvas - i.e. exactly
+       the pixels that will be sent - and not a wider empty box. */
+    overflow-x: auto; border: 1px solid #3a3f4b; border-radius: 6px;
+    padding: 0; line-height: 0;
+    /* Hug the picture rather than drawing a wide empty box around a small
+       one, while still capping at the card so wide pictures scroll. */
+    width: fit-content; max-width: 100%;
+  }
+  #image-preview-canvas { image-rendering: pixelated; display: block; }
+  /* touch-action keeps a drag painting instead of scrolling the page */
+  #image-preview-canvas.paintable { cursor: crosshair; touch-action: none; }
+  #image-preview-canvas:focus-visible { outline: 2px solid #4f8cff; outline-offset: -2px; }
+  .upload-label {
+    display: inline-block; padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid #3a3f4b;
+    background: #262a33; color: #e8e8e8; cursor: pointer; font-size: 0.9rem; margin: 0;
+  }
+  .upload-label:hover { background: #303542; }
+  kbd {
+    background: #14161a; border: 1px solid #3a3f4b; border-bottom-width: 2px;
+    border-radius: 3px; padding: 0 0.25rem; font-size: 0.75rem; font-family: inherit;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Ferrograph Sign Control</h1>
+    <form method="post" action="/logout"><button type="submit" class="link">Sign out</button></form>
+  </header>
+
+  <div class="card status-bar" id="status-bar">
+    <span class="dot" id="status-dot"></span>
+    <span id="status-text">Checking connection&hellip;</span>
+    <span style="margin-left:auto;display:flex;gap:0.5rem;align-items:center;">
+      <span class="muted" id="state-note"></span>
+      <button type="button" id="resync-btn" title="Re-send the memory configuration and every file, so the sign matches this list">Re-send everything</button>
+    </span>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <label for="label">Label</label>
+        <select id="label"></select>
+      </div>
+      <div>
+        <label for="priority">&nbsp;</label>
+        <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.9rem;color:#e8e8e8;">
+          <input type="checkbox" id="priority" style="width:auto;"> Priority (overrides everything)
+        </label>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <div>
+        <label for="font-select">Font</label>
+        <select id="font-select"></select>
+      </div>
+      <div>
+        <label for="color-select">Color</label>
+        <select id="color-select"></select>
+      </div>
+      <button type="button" id="apply-format">Apply to selection</button>
+      <button type="button" id="clear-format">Clear formatting</button>
+    </div>
+
+    <div class="toolbar">
+      <div>
+        <label for="insert-image-select" title="Only images already saved to the sign can be referenced">Insert image</label>
+        <select id="insert-image-select"></select>
+      </div>
+      <button type="button" id="insert-image-btn">Insert</button>
+      <div>
+        <label for="insert-string-select">Insert string</label>
+        <select id="insert-string-select"></select>
+      </div>
+      <button type="button" id="insert-string-btn">Insert</button>
+    </div>
+
+    <label for="editor">Message</label>
+    <div id="editor" contenteditable="true" data-placeholder="Type your message, then select text and apply a color/font&hellip;"></div>
+    <p class="muted" style="margin-top:0.4rem;">Images and strings are separate files on the sign - they only appear where a message calls them, so insert them here to display them. The dropdowns list files already saved to the sign, so save an image or string below first and it'll appear.</p>
+
+    <div class="row" style="margin-top:0.75rem;">
+      <div>
+        <label for="position">Position</label>
+        <select id="position"></select>
+      </div>
+      <div>
+        <label for="mode">Effect</label>
+        <select id="mode"></select>
+      </div>
+      <div>
+        <label for="speed">Speed</label>
+        <select id="speed">
+          <option value="">Sign default</option>
+          <option value="1">1 (slowest)</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5">5 (fastest)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button type="button" id="preview-btn">Preview</button>
+      <button type="button" id="send-btn" class="primary">Send</button>
+      <button type="button" id="clear-btn" class="danger">Clear label</button>
+    </div>
+    <div class="error-msg" id="compose-error"></div>
+    <pre class="bytes" id="bytes-preview" hidden></pre>
+  </div>
+
+  <div class="card">
+    <label style="margin-bottom:0.5rem;">Image</label>
+    <p class="muted">Draw a picture pixel by pixel, or upload one and have it mapped to the sign's red/green/yellow palette right here in your browser - nothing leaves the browser until you save. Both write to the same grid, so you can upload then touch up by hand.</p>
+    <p class="muted"><strong>Save first, then insert.</strong> An image is a file, not a message: saving stores the picture on the sign (on its own it displays nothing), and it appears when a message calls it. So save it here, then use <em>Insert into message</em> - an image has to exist on the sign before a message can reference it, which is why the Insert image dropdown up there only lists saved ones.</p>
+    <div class="row">
+      <div>
+        <label for="image-source">Make it by</label>
+        <select id="image-source">
+          <option value="draw">Drawing it</option>
+          <option value="upload">Uploading a file</option>
+        </select>
+      </div>
+      <div>
+        <label for="image-label">Label</label>
+        <select id="image-label"></select>
+      </div>
+      <div>
+        <label for="image-width">Width (px)</label>
+        <input type="number" id="image-width" value="32" min="1" max="135" style="width:5rem;">
+      </div>
+      <div>
+        <label for="image-height">Height (px)</label>
+        <input type="number" id="image-height" value="16" min="1" max="16" style="width:5rem;">
+      </div>
+    </div>
+
+    <div class="row" id="image-upload-panel" hidden>
+      <div>
+        <label for="image-file">Choose file</label>
+        <input type="file" id="image-file" accept="image/*">
+      </div>
+      <div>
+        <label for="image-dither">Colour mapping</label>
+        <select id="image-dither">
+          <option value="dither">Dither (photos)</option>
+          <option value="solid">Solid (text &amp; logos)</option>
+        </select>
+      </div>
+      <div style="flex-basis:100%;">
+        <p class="muted" id="image-source-size" style="margin:0;"></p>
+        <p class="muted" style="margin:0.2rem 0 0;">Use <em>Dither</em> for photos and gradients, <em>Solid</em> for text and logos - dithering shreds high-contrast edges into speckle. Pictures that already fit the display are used at their exact size, so a 16&times;16 icon stays an icon; only larger artwork is scaled down.</p>
+      </div>
+    </div>
+
+    <div class="toolbar" id="image-draw-panel">
+      <div>
+        <label>Paint with</label>
+        <div id="draw-palette">
+          <button type="button" class="swatch" data-code="0" style="--swatch:#000" title="Off (1)">Off</button>
+          <button type="button" class="swatch active" data-code="1" style="--swatch:#ff5a5a" title="Red (2)">Red</button>
+          <button type="button" class="swatch" data-code="2" style="--swatch:#5aff8a" title="Green (3)">Green</button>
+          <button type="button" class="swatch" data-code="3" style="--swatch:#ffe45a" title="Yellow (4)">Yellow</button>
+        </div>
+      </div>
+      <div>
+        <label for="draw-zoom">Zoom</label>
+        <select id="draw-zoom">
+          <option value="fit">Fit width</option>
+          <option value="8">8px</option>
+          <option value="12">12px</option>
+          <option value="16">16px</option>
+          <option value="24">24px</option>
+        </select>
+      </div>
+      <button type="button" id="draw-undo-btn" disabled>Undo</button>
+      <button type="button" id="draw-clear-btn" class="danger">Clear grid</button>
+    </div>
+
+    <div id="image-canvas-scroll">
+      <canvas id="image-preview-canvas" tabindex="0"></canvas>
+    </div>
+    <p class="muted" id="draw-hint" hidden>Click or drag to paint. Right-click (or ctrl-click) erases; keys <kbd>1</kbd>-<kbd>4</kbd> pick a colour. Every 8th gridline is brighter, for counting across. Uploading a picture drops it onto this same grid, so you can fix by hand whatever the dither got wrong. <strong>Download PNG</strong> saves what's on the grid to your computer at true size - one image pixel per LED - and uploading that file back reproduces it exactly, which is how you keep a picture between sessions.</p>
+    <div id="image-chip-fraction" class="muted" style="margin-top:0.5rem;"></div>
+    <div class="actions">
+      <button type="button" id="image-preview-btn">Preview bytes</button>
+      <button type="button" id="image-send-btn" class="primary">Save to sign</button>
+      <button type="button" id="image-insert-btn" disabled title="Save the image first">Insert into message</button>
+      <button type="button" id="image-download-btn" title="Save the picture to your computer as a PNG, at true size">Download PNG</button>
+      <button type="button" id="image-force-btn" class="danger" hidden>Save anyway (override LED safety check)</button>
+    </div>
+    <div class="error-msg" id="image-error"></div>
+    <div class="chip-ok" id="image-hint"></div>
+    <pre class="bytes" id="image-bytes-preview" hidden></pre>
+  </div>
+
+  <div class="card">
+    <label style="margin-bottom:0.5rem;">Strings</label>
+    <p class="muted">Reusable text a message can call inline. Rewriting a string swaps its contents in without blanking the display or disturbing the message around it - which makes it the right place for anything that changes often.</p>
+    <div class="row">
+      <div>
+        <label for="string-label">Label</label>
+        <select id="string-label"></select>
+      </div>
+      <div style="flex:1;">
+        <label for="string-text">Text</label>
+        <input type="text" id="string-text" style="width:100%;" placeholder="e.g. a value you'll update often">
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" id="string-preview-btn">Preview</button>
+      <button type="button" id="string-send-btn" class="primary">Save string</button>
+    </div>
+    <div class="error-msg" id="string-error"></div>
+    <pre class="bytes" id="string-bytes-preview" hidden></pre>
+  </div>
+
+  <div class="card">
+    <label style="margin-bottom:0.5rem;">Configuration</label>
+    <p class="muted">The whole set of files as one file: every message, string and picture, with the pixel data. Useful as a backup before changing things, for moving a setup to another machine, or for keeping several arrangements and switching between them.</p>
+    <div class="actions">
+      <button type="button" id="config-download-btn">Download configuration</button>
+      <label for="config-upload" class="upload-label" title="Replaces everything currently on the sign">Upload configuration&hellip;</label>
+      <input type="file" id="config-upload" accept="application/json,.json" hidden>
+    </div>
+    <div class="error-msg" id="config-error"></div>
+    <div class="chip-ok" id="config-note"></div>
+  </div>
+
+  <div class="card">
+    <label style="margin-bottom:0.5rem;">Files on the sign (this session)</label>
+    <ul class="labels" id="labels-list"></ul>
+    <p class="muted" id="labels-empty">Nothing sent yet.</p>
+  </div>
+
+  <details class="card">
+    <summary>Advanced: raw command</summary>
+    <div class="row" style="margin-top:0.75rem;">
+      <div>
+        <label for="raw-command">Command code</label>
+        <input type="text" id="raw-command" maxlength="1" size="2" placeholder="E">
+      </div>
+      <div style="flex:1;">
+        <label for="raw-data">Data</label>
+        <input type="text" id="raw-data" style="width:100%;" placeholder="23">
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" id="raw-preview-btn">Preview</button>
+      <button type="button" id="raw-send-btn" class="primary">Send</button>
+    </div>
+    <pre class="bytes" id="raw-bytes-preview" hidden></pre>
+
+    <label style="margin-top:1.25rem;">Read back from the sign</label>
+    <p class="muted">Asks the sign what it currently holds. The reply is shown raw, because the request format for reads comes from Alpha's protocol manual rather than XDF's own - so what your sign actually answers is the evidence, and worth seeing before anything is built on top of it.</p>
+    <div class="row">
+      <div>
+        <label for="read-what">Read</label>
+        <select id="read-what">
+          <option value="memory_config">Memory configuration</option>
+          <option value="dump">Whole memory dump</option>
+          <option value="text">Text file</option>
+          <option value="string">String file</option>
+          <option value="image">Image file</option>
+        </select>
+      </div>
+      <div>
+        <label for="read-label">Label</label>
+        <input type="text" id="read-label" maxlength="1" size="2" placeholder="A">
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" id="read-btn" class="primary">Read from sign</button>
+    </div>
+    <div class="error-msg" id="read-error"></div>
+    <pre class="bytes" id="read-output" hidden></pre>
+  </details>
+</div>
+<script src="/pixel_grid.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

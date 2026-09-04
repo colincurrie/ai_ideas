@@ -1,0 +1,35 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Runs the fake sign: a pseudo-terminal that behaves like the display's
+# serial port, plus a live preview at http://127.0.0.1:4569.
+#
+#   bin/fake-sign
+#   SERIAL_DEVICE=<printed path> bundle exec rackup serial_api/config.ru -p 4568
+#
+# See tools/fake_sign/README.md.
+
+require "optparse"
+
+port = 4569
+memory_kb = 128
+
+OptionParser.new do |p|
+  p.banner = "Usage: fake-sign [options]"
+  p.on("--port PORT", Integer, "Port for the preview page (default 4569)") { |v| port = v }
+  p.on("--memory KB", Integer, "Fitted memory: decides how many text files the default configuration defines (128 or 256)") { |v| memory_kb = v }
+  p.on("-h", "--help") { puts p; exit }
+end.parse!
+
+require_relative "../tools/fake_sign/server"
+
+# Keep a reference to the slave side: closing it would tear down the pty.
+_master, slave = FakeSign::Server.boot!(memory_kb: memory_kb)
+
+puts "fake sign listening on #{slave.path}"
+puts "preview: http://127.0.0.1:#{port}"
+puts
+puts "point serial_api at it with:"
+puts "  SERIAL_DEVICE=#{slave.path} bundle exec rackup serial_api/config.ru -o 127.0.0.1 -p 4568"
+
+FakeSign::Server.run!(bind: "127.0.0.1", port: port)

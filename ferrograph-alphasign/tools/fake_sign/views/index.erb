@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fake sign</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; background: #14161a; color: #e8e8e8; margin: 0; padding: 1.5rem; }
+  .app { max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.25rem; }
+  header { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
+  h1 { font-size: 1.15rem; margin: 0; }
+  .card { background: #1e2128; border: 1px solid #2b2f38; border-radius: 10px; padding: 1rem 1.25rem; }
+  .muted { color: #888; font-size: 0.85rem; }
+  code { background: #101216; padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.85rem; }
+  /* fit-content so the panel hugs the display rather than drawing a wide
+     empty box around it; capped so a full-width frame still scrolls. */
+  .panel { background: #000; border: 1px solid #3a3f4b; border-radius: 6px; overflow-x: auto; padding: 0.5rem; width: fit-content; max-width: 100%; }
+  canvas { image-rendering: pixelated; display: block; }
+  .frame-label { font-size: 0.8rem; color: #9db4d1; margin: 0.75rem 0 0.3rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th { text-align: left; color: #888; font-weight: 500; padding: 0.3rem 0.5rem 0.3rem 0; font-size: 0.8rem; }
+  td { padding: 0.3rem 0.5rem 0.3rem 0; border-top: 1px solid #2b2f38; vertical-align: top; }
+  .log { display: flex; flex-direction: column; gap: 0.5rem; max-height: 26rem; overflow-y: auto; }
+  .entry { background: #14161a; border: 1px solid #2b2f38; border-radius: 6px; padding: 0.5rem 0.75rem; }
+  .entry .head { display: flex; gap: 0.75rem; align-items: baseline; }
+  .entry .when { color: #666; font-size: 0.75rem; }
+  .entry .what { font-size: 0.9rem; }
+  .entry .hex { color: #5a6270; font-size: 0.72rem; font-family: ui-monospace, monospace; word-break: break-all; margin-top: 0.25rem; }
+  .finding { font-size: 0.82rem; margin-top: 0.35rem; padding-left: 0.6rem; border-left: 2px solid; }
+  .finding.error { color: #ff8f94; border-color: #d9534f; }
+  .finding.warning { color: #ffd479; border-color: #c99a2e; }
+  button { padding: 0.4rem 0.9rem; border-radius: 6px; border: 1px solid #3a3f4b; background: #262a33; color: #e8e8e8; cursor: pointer; font-size: 0.85rem; }
+  button:hover { background: #303542; }
+  .empty { color: #666; font-size: 0.9rem; }
+  .est { color: #ffd479; border-bottom: 1px dotted #c99a2e; }
+  .frame-meta { font-size: 0.78rem; color: #7b8494; margin: 0.2rem 0 0.5rem; }
+  .frame-label { display: flex; gap: 0.6rem; align-items: baseline; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Fake sign</h1>
+    <span class="muted">serial device: <code id="device">…</code></span>
+  </header>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;">
+      <strong style="font-size:0.95rem;">Display</strong>
+      <span class="muted">135 × 16 · the run sequence, playing</span>
+    </div>
+    <div id="frames"></div>
+    <p class="muted" style="margin-bottom:0;">Glyphs are an approximation, not the Aurora's font, so use this for layout, colour and which files get called — not for deciding whether a message fits. Effects marked <span class="est">estimated</span> move at guessed speeds: the manual gives the pause between frames but never a scroll rate. See <code>tools/fake_sign/CALIBRATION.md</code>.</p>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;">
+      <strong style="font-size:0.95rem;">Files</strong>
+      <button type="button" id="reset">Reset to default configuration</button>
+    </div>
+    <table id="files"></table>
+  </div>
+
+  <div class="card">
+    <strong style="font-size:0.95rem;">Wire log</strong>
+    <p class="muted">Newest first. Findings are what the manual says the sign would make of these bytes.</p>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+<script src="/animate.js"></script>
+<script>
+const COLOURS = ["#000", "#ff3b3b", "#33e06a", "#ffd21f"];
+
+function drawFrame(pixels) {
+  const cell = 4;
+  const canvas = document.createElement("canvas");
+  canvas.width = pixels[0].length * cell;
+  canvas.height = pixels.length * cell;
+  paint(canvas, pixels);
+  return canvas;
+}
+
+// The run sequence, playing. Each text file gets its effect's full cycle,
+// then the next one takes over - which is what the sign does.
+let player = { frames: [], timings: null, index: 0, startedAt: 0, canvases: [] };
+
+function signatureOf(frames) {
+  return JSON.stringify(frames.map((f) => [f.label, f.motion, f.canvas.width, f.pause, f.transition]));
+}
+
+function buildFrames(frames, timings) {
+  const host = document.getElementById("frames");
+  host.innerHTML = "";
+  player.canvases = [];
+
+  if (!frames.length) {
+    host.innerHTML = '<p class="empty">Nothing in the run sequence — no text file has content yet.</p>';
+    return;
+  }
+
+  frames.forEach((frame) => {
+    const head = document.createElement("div");
+    head.className = "frame-label";
+    const name = document.createElement("span");
+    name.textContent = `text file ${frame.label}`;
+    head.appendChild(name);
+
+    const meta = document.createElement("div");
+    meta.className = "frame-meta";
+    const seconds = Animate.duration(frame, timings).toFixed(1);
+    meta.textContent = `${frame.description} · ${frame.position} · ${seconds}s cycle · ${frame.pause}s pause`;
+    if (frame.approximated) {
+      const flag = document.createElement("span");
+      flag.className = "est";
+      flag.textContent = " · approximated";
+      meta.appendChild(flag);
+    }
+
+    const panel = document.createElement("div");
+    panel.className = "panel";
+    const canvas = drawFrame(Animate.blank());
+    panel.appendChild(canvas);
+    player.canvases.push(canvas);
+
+    host.append(head, meta, panel);
+  });
+}
+
+function paint(canvas, pixels) {
+  const cell = 4;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#0a0a0a";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  for (let y = 0; y < pixels.length; y++) {
+    for (let x = 0; x < pixels[y].length; x++) {
+      const code = pixels[y][x];
+      if (!code) continue;
+      ctx.fillStyle = COLOURS[code];
+      ctx.fillRect(x * cell, y * cell, cell - 1, cell - 1);
+    }
+  }
+}
+
+function tick() {
+  requestAnimationFrame(tick);
+  if (!player.frames.length || !player.timings) return;
+
+  const now = performance.now() / 1000;
+  const current = player.frames[player.index];
+  const elapsed = now - player.startedAt;
+  const cycle = Animate.duration(current, player.timings);
+
+  if (elapsed >= cycle) {
+    player.index = (player.index + 1) % player.frames.length;
+    player.startedAt = now;
+  }
+
+  player.frames.forEach((frame, i) => {
+    // Only the file whose turn it is animates; the rest sit at the end of
+    // their effect, the way they'd look just before handing over.
+    const t = i === player.index ? elapsed : Animate.duration(frame, player.timings);
+    paint(player.canvases[i], Animate.render(frame, t, player.timings));
+  });
+}
+requestAnimationFrame(tick);
+
+function renderFiles(sign) {
+  const table = document.getElementById("files");
+  const rows = Object.entries(sign.files);
+  table.innerHTML = "<tr><th>Label</th><th>Type</th><th>Written</th><th>Contents</th></tr>";
+  rows.forEach(([label, file]) => {
+    const tr = document.createElement("tr");
+    const contents = file.preview || (file.dimensions ? file.dimensions : "");
+    [label, file.type, file.updated ? "yes" : "—", contents].forEach((value) => {
+      const td = document.createElement("td");
+      td.textContent = value;
+      tr.appendChild(td);
+    });
+    table.appendChild(tr);
+  });
+}
+
+function renderLog(entries) {
+  const host = document.getElementById("log");
+  host.innerHTML = "";
+  if (!entries.length) {
+    host.innerHTML = '<p class="empty">Nothing received yet. Point serial_api at the device above and send something.</p>';
+    return;
+  }
+  entries.forEach((entry) => {
+    const div = document.createElement("div");
+    div.className = "entry";
+    const head = document.createElement("div");
+    head.className = "head";
+    const when = document.createElement("span");
+    when.className = "when";
+    when.textContent = entry.at;
+    const what = document.createElement("span");
+    what.className = "what";
+    what.textContent = entry.summary;
+    head.append(when, what);
+    div.appendChild(head);
+    entry.findings.forEach((finding) => {
+      const f = document.createElement("div");
+      f.className = `finding ${finding.severity}`;
+      f.textContent = `${finding.severity}: ${finding.message}`;
+      div.appendChild(f);
+    });
+    const hex = document.createElement("div");
+    hex.className = "hex";
+    hex.textContent = entry.bytes;
+    div.appendChild(hex);
+    host.appendChild(div);
+  });
+}
+
+async function poll() {
+  try {
+    const res = await fetch("/state");
+    const state = await res.json();
+    document.getElementById("device").textContent = state.device;
+    // Only rebuild when the structure changes, so an animation in flight
+    // isn't restarted twice a second by polling.
+    const signature = signatureOf(state.frames);
+    if (signature !== player.signature) {
+      player.signature = signature;
+      player.frames = state.frames;
+      player.timings = state.timings;
+      player.index = 0;
+      player.startedAt = performance.now() / 1000;
+      buildFrames(state.frames, state.timings);
+    }
+    renderFiles(state.sign);
+    renderLog(state.log);
+  } catch (e) { /* server restarting; try again next tick */ }
+}
+
+document.getElementById("reset").addEventListener("click", async () => {
+  await fetch("/reset", { method: "POST" });
+  poll();
+});
+
+poll();
+setInterval(poll, 500);
+</script>
+</body>
+</html>
