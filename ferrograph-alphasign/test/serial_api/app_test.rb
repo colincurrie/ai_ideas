@@ -411,6 +411,61 @@ module SerialApi
       assert_equal true, state["enabled"]
     end
 
+    # --- the record only ever describes what the sign actually took ---
+
+    # Routes mutate the layout before writing, so a failed write used to
+    # leave the service claiming a file the sign never received - and the
+    # next successful write would then save that claim to disk.
+    def test_a_failed_message_write_leaves_no_trace
+      json_post("/messages", label: "A", runs: [{ text: "LANDED" }])
+      App.set :connection, FailingConnection.new(StandardError.new("port went away"))
+
+      json_post("/messages", label: "B", runs: [{ text: "NEVER ARRIVED" }])
+      assert_equal 502, last_response.status
+
+      App.set :connection, @recorder
+      get "/files"
+      assert_equal %w[A], JSON.parse(last_response.body)["text"].keys
+    end
+
+    def test_a_failed_delete_leaves_the_file_in_the_record
+      json_post("/messages", label: "A", runs: [{ text: "STILL THERE" }])
+      App.set :connection, FailingConnection.new(StandardError.new("port went away"))
+
+      delete "/messages/A"
+      assert_equal 502, last_response.status
+
+      App.set :connection, @recorder
+      get "/files"
+      assert_equal %w[A], JSON.parse(last_response.body)["text"].keys,
+                   "the sign never got the blanking write, so it still holds the file"
+    end
+
+    def test_a_failed_image_write_leaves_no_trace
+      App.set :connection, FailingConnection.new(StandardError.new("port went away"))
+      json_post("/image", label: "P", width: 2, height: 1, pixels: "10")
+      assert_equal 502, last_response.status
+
+      App.set :connection, @recorder
+      get "/files"
+      assert_empty JSON.parse(last_response.body)["dots"]
+    end
+
+    # And the file on disk must not contain it either.
+    def test_a_failed_write_is_not_persisted
+      json_post("/messages", label: "A", runs: [{ text: "LANDED" }])
+      before = File.read(@state_file)
+
+      App.set :connection, FailingConnection.new(StandardError.new("port went away"))
+      json_post("/messages", label: "B", runs: [{ text: "NEVER ARRIVED" }])
+      assert_equal before, File.read(@state_file)
+
+      # ...and the next good write saves the true state, not the stale claim.
+      App.set :connection, @recorder
+      json_post("/messages", label: "C", runs: [{ text: "ALSO LANDED" }])
+      assert_equal %w[A C], saved_state[:text].keys.map(&:to_s).sort
+    end
+
     # --- configuration download and upload ---
 
     def test_state_download_carries_every_file_and_the_pixel_data

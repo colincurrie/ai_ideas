@@ -59,6 +59,11 @@ module SerialApi
 
     before do
       content_type :json
+      # Routes mutate the layout before writing to the sign, so if the
+      # write fails the record would be left claiming files the sign never
+      # received - ahead of both the sign and the state file. Snapshot
+      # first; write_layout_change puts it back on failure.
+      @layout_snapshot = settings.layout.to_state unless request.get?
     end
 
     helpers do
@@ -144,6 +149,7 @@ module SerialApi
           # installed - that should surface as a normal API error, not a
           # 500.
           settings.last_error = e.message
+          revert_layout!
           halt 502, { ok: false, error: e.message }.to_json
         end
 
@@ -178,6 +184,15 @@ module SerialApi
       rescue StandardError, LoadError => e
         settings.last_error = e.message
         halt 502, { ok: false, error: e.message }.to_json
+      end
+
+      # Undoes whatever the route did to the layout, so a push the sign
+      # didn't accept leaves no trace. Without this the service would
+      # report - and eventually save - a file the sign never got.
+      def revert_layout!
+        return if @layout_snapshot.nil?
+
+        settings.layout = Layout.from_state(@layout_snapshot)
       end
 
       # For the packets that sit outside the file system entirely (the

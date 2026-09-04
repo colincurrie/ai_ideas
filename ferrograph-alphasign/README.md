@@ -445,6 +445,12 @@ tool, the state file came from a backup - nothing can detect it. `POST
 Memory Configuration followed by every file, which blanks the display
 briefly and is why it isn't automatic.
 
+The record only ever describes what the sign actually took. Routes change
+the layout before writing, so a push the sign refuses is rolled back
+before the error is returned - otherwise the service would report a file
+the sign never received, and eventually save that claim on the next
+successful write.
+
 A state file that's missing, truncated or the wrong shape is stepped over
 rather than fatal: the service boots with an empty layout and says so in
 `GET /status`, since one reconfiguration is a cheaper failure than a
